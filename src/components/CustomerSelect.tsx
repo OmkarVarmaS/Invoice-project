@@ -181,11 +181,12 @@ export const CustomerSelect: React.FC<CustomerSelectProps> = ({
                 </div>
                 <button
                   type="button"
+                  className="btn-icon-only"
                   onClick={() => setShowAddModal(false)}
-                  style={{ marginLeft: 'auto', background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--slate-400)' }}
+                  style={{ marginLeft: 'auto' }}
                   aria-label="Close"
                 >
-                  <X size={20} />
+                  <X size={18} />
                 </button>
               </div>
 

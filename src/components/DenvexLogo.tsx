@@ -4,13 +4,17 @@ interface DenvexLogoProps {
   size?: number;
   className?: string;
   showText?: boolean;
+  variant?: 'light' | 'dark';
 }
 
 export const DenvexLogo: React.FC<DenvexLogoProps> = ({
   size = 36,
   className = '',
   showText = false,
+  variant = 'light',
 }) => {
+  const isDarkBg = variant === 'dark';
+
   return (
     <div
       className={`denvex-logo-wrapper ${className}`}
@@ -23,12 +27,12 @@ export const DenvexLogo: React.FC<DenvexLogoProps> = ({
         fill="none"
         xmlns="http://www.w3.org/2000/svg"
         style={{
-          borderRadius: `${Math.round(size * 0.22)}px`,
-          boxShadow: '0 2px 8px rgba(8, 24, 50, 0.25)',
+          borderRadius: `${Math.round(size * 0.24)}px`,
+          boxShadow: isDarkBg ? '0 2px 8px rgba(0, 0, 0, 0.4)' : '0 2px 8px rgba(8, 24, 50, 0.25)',
           flexShrink: 0,
         }}
       >
-        <rect width="100" height="100" rx="20" fill="#081832" />
+        <rect width="100" height="100" rx="20" fill={isDarkBg ? '#132a4e' : '#081832'} />
         {/* Top Right Crossing Slash */}
         <line
           x1="68"
@@ -69,15 +73,15 @@ export const DenvexLogo: React.FC<DenvexLogoProps> = ({
         <span
           style={{
             fontWeight: 800,
-            fontSize: '1.25rem',
-            color: 'var(--slate-900)',
-            letterSpacing: '-0.02em',
+            fontSize: '1.3rem',
+            letterSpacing: '-0.03em',
             display: 'flex',
             alignItems: 'center',
+            color: isDarkBg ? '#ffffff' : 'var(--slate-900)',
           }}
         >
-          <span style={{ color: '#081832' }}>Denvex</span>
-          <span style={{ color: 'var(--primary-600)' }}>Invoice</span>
+          <span>Denve</span>
+          <span style={{ color: isDarkBg ? '#60a5fa' : 'var(--primary-600)' }}>X</span>
         </span>
       )}
     </div>

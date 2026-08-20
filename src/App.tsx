@@ -1,129 +1,218 @@
-import React, { useState } from 'react';
-import { InvoiceCreateForm } from '@/components/InvoiceCreateForm';
+import React, { useState, useEffect, useCallback } from 'react';
+import { Sidebar } from '@/components/Sidebar';
+import { DashboardView } from '@/components/DashboardView';
+import { ClientsView } from '@/components/ClientsView';
 import { InvoiceList } from '@/components/InvoiceList';
+import { EstimatesView } from '@/components/EstimatesView';
+import { SettingsView } from '@/components/SettingsView';
+import { InvoiceCreateForm } from '@/components/InvoiceCreateForm';
 import { isSupabaseConfigured } from '@/lib/supabaseClient';
-import { DenvexLogo } from '@/components/DenvexLogo';
-import { Database, Sparkles, PlusCircle, Layers } from 'lucide-react';
+import {
+  listAllInvoices,
+  listAllEstimates,
+  listRecentDocuments,
+  fetchCustomers,
+} from '@/services/invoiceService';
+import type { AppView, InvoiceWithDetails, CustomerRow } from '@/types/invoice';
+import { Menu, Plus } from 'lucide-react';
 
 export const App: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<'create' | 'list'>('create');
-  const [currencySymbol, setCurrencySymbol] = useState('$');
+  const [currentView, setCurrentView] = useState<AppView>('dashboard');
+  const [currencySymbol, setCurrencySymbol] = useState<string>('₹');
+  const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
+  const [selectedCustomerIdForForm, setSelectedCustomerIdForForm] = useState<string | undefined>(undefined);
+
+  // App Data State
+  const [invoices, setInvoices] = useState<InvoiceWithDetails[]>([]);
+  const [estimates, setEstimates] = useState<InvoiceWithDetails[]>([]);
+  const [recentDocuments, setRecentDocuments] = useState<InvoiceWithDetails[]>([]);
+  const [customers, setCustomers] = useState<CustomerRow[]>([]);
+
+  // Load all data
+  const loadAppData = useCallback(async () => {
+    try {
+      const [invList, estList, recentList, custList] = await Promise.all([
+        listAllInvoices(),
+        listAllEstimates(),
+        listRecentDocuments(10),
+        fetchCustomers(),
+      ]);
+
+      setInvoices(invList);
+      setEstimates(estList);
+      setRecentDocuments(recentList);
+      setCustomers(custList);
+    } catch (e) {
+      console.error('Failed to load application data:', e);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadAppData();
+  }, [loadAppData, currentView]);
+
+  // Navigate helpers
+  const handleNavigate = (view: AppView) => {
+    setSelectedCustomerIdForForm(undefined);
+    setCurrentView(view);
+  };
+
+  const handleNavigateWithCustomer = (view: AppView, customerId: string) => {
+    setSelectedCustomerIdForForm(customerId);
+    setCurrentView(view);
+  };
 
   return (
-    <div className="app-wrapper">
-      {/* App Header */}
-      <header className="app-header">
-        <div className="header-inner">
-          <div className="brand-badge" style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
-            <DenvexLogo size={34} />
-            <div className="brand-title" style={{ fontSize: '1.25rem', fontWeight: 800, letterSpacing: '-0.02em' }}>
-              <span style={{ color: '#081832' }}>Denvex</span>
-              <span style={{ color: 'var(--primary-600)' }}>Invoice</span>
-            </div>
-          </div>
+    <div className="app-layout">
+      {/* Dark Midnight Navy Sidebar */}
+      <Sidebar
+        currentView={currentView}
+        onNavigate={handleNavigate}
+        isOpenMobile={isMobileSidebarOpen}
+        onCloseMobile={() => setIsMobileSidebarOpen(false)}
+        invoiceCount={invoices.length}
+        estimateCount={estimates.length}
+        clientCount={customers.length}
+        userEmail="admin.denvex@gmail.com"
+        isLiveDb={isSupabaseConfigured}
+      />
 
-          {/* Navigation Tabs */}
-          <nav style={{ display: 'flex', gap: '0.5rem', background: 'var(--slate-100)', padding: '4px', borderRadius: 'var(--radius-md)' }}>
-            <button
-              type="button"
-              onClick={() => setActiveTab('create')}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '6px',
-                padding: '0.45rem 1rem',
-                fontSize: '0.85rem',
-                fontWeight: 700,
-                borderRadius: 'var(--radius-sm)',
-                background: activeTab === 'create' ? '#ffffff' : 'transparent',
-                color: activeTab === 'create' ? 'var(--primary-700)' : 'var(--slate-600)',
-                boxShadow: activeTab === 'create' ? 'var(--shadow-xs)' : 'none',
-                transition: 'all 150ms ease',
-              }}
-              id="tab-create-invoice"
-            >
-              <PlusCircle size={15} /> Create Invoice
-            </button>
+      {/* Main Page Area */}
+      <div className="app-main-content">
+        {/* Top Sticky Bar */}
+        <header className="top-bar">
+          <button
+            type="button"
+            className="top-bar-mobile-toggle"
+            onClick={() => setIsMobileSidebarOpen(true)}
+            aria-label="Open navigation menu"
+          >
+            <Menu size={22} />
+          </button>
 
-            <button
-              type="button"
-              onClick={() => setActiveTab('list')}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '6px',
-                padding: '0.45rem 1rem',
-                fontSize: '0.85rem',
-                fontWeight: 700,
-                borderRadius: 'var(--radius-sm)',
-                background: activeTab === 'list' ? '#ffffff' : 'transparent',
-                color: activeTab === 'list' ? 'var(--primary-700)' : 'var(--slate-600)',
-                boxShadow: activeTab === 'list' ? 'var(--shadow-xs)' : 'none',
-                transition: 'all 150ms ease',
-              }}
-              id="tab-all-invoices"
-            >
-              <Layers size={15} /> All Invoices
-            </button>
-          </nav>
+          <div className="top-bar-actions">
+            {/* Quick action buttons if on views other than create */}
+            {currentView !== 'create-invoice' && currentView !== 'create-estimate' && (
+              <div style={{ display: 'flex', gap: '0.5rem', marginRight: '0.5rem' }}>
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  onClick={() => handleNavigate('create-estimate')}
+                  id="header-btn-new-estimate"
+                >
+                  <Plus size={14} /> New Estimate
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-primary btn-sm"
+                  onClick={() => handleNavigate('create-invoice')}
+                  id="header-btn-new-invoice"
+                >
+                  <Plus size={14} /> New Invoice
+                </button>
+              </div>
+            )}
 
-          <div className="header-actions">
             {/* Currency Selector */}
             <select
               value={currencySymbol}
               onChange={(e) => setCurrencySymbol(e.target.value)}
               className="form-select"
-              style={{ padding: '0.35rem 0.6rem', fontSize: '0.8rem', width: 'auto', fontWeight: 600 }}
-              title="Change display currency"
+              style={{
+                padding: '0.35rem 0.65rem',
+                fontSize: '0.8rem',
+                width: 'auto',
+                fontWeight: 700,
+                cursor: 'pointer',
+              }}
+              title="Change active currency"
             >
+              <option value="₹">₹ INR</option>
               <option value="$">$ USD</option>
               <option value="€">€ EUR</option>
               <option value="£">£ GBP</option>
-              <option value="₹">₹ INR</option>
             </select>
 
-            <div className={`backend-indicator ${isSupabaseConfigured ? 'live' : ''}`} id="backend-status-badge">
+            {/* Live Backend Connection Indicator */}
+            <div
+              className={`backend-indicator ${isSupabaseConfigured ? 'live' : ''}`}
+              title={isSupabaseConfigured ? 'PostgreSQL Live Connected' : 'Local Sandbox Active'}
+            >
               <div className="indicator-dot" />
-              <span>
-                {isSupabaseConfigured ? 'Supabase Connected' : 'Local Sandbox'}
-              </span>
+              <span>{isSupabaseConfigured ? 'Live Supabase' : 'Local Sandbox'}</span>
             </div>
           </div>
-        </div>
-      </header>
+        </header>
 
-      {/* Main Container */}
-      <main className="main-container">
-        {activeTab === 'create' ? (
-          <InvoiceCreateForm
-            currencySymbol={currencySymbol}
-            onViewInvoicesList={() => setActiveTab('list')}
-          />
-        ) : (
-          <InvoiceList
-            onCreateNew={() => setActiveTab('create')}
-            currencySymbol={currencySymbol}
-          />
-        )}
-      </main>
+        {/* Dynamic View Canvas */}
+        <main className="view-container">
+          {currentView === 'dashboard' && (
+            <DashboardView
+              invoices={invoices}
+              estimates={estimates}
+              recentDocuments={recentDocuments}
+              customers={customers}
+              currencySymbol={currencySymbol}
+              onNavigate={handleNavigate}
+              onRefresh={loadAppData}
+            />
+          )}
 
-      {/* Footer */}
-      <footer style={{ marginTop: 'auto', borderTop: '1px solid var(--slate-200)', background: '#ffffff', padding: '1.25rem 1.5rem', textAlign: 'center', fontSize: '0.825rem', color: 'var(--slate-500)' }}>
-        <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '1.5rem', flexWrap: 'wrap' }}>
-          <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-            <Database size={14} style={{ color: 'var(--primary-600)' }} /> Database Triggers Auto-Calculations
-          </span>
-          <span>•</span>
-          <span>Invoices • Invoice Items • Customers</span>
-          <span>•</span>
-          <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-            <Sparkles size={14} style={{ color: 'var(--primary-600)' }} /> Real-time PostgreSQL Sync
-          </span>
-        </div>
-      </footer>
+          {currentView === 'clients' && (
+            <ClientsView
+              customers={customers}
+              onCustomerAdded={(newCust) => {
+                setCustomers((prev) => [newCust, ...prev]);
+                loadAppData();
+              }}
+              onNavigateWithCustomer={handleNavigateWithCustomer}
+            />
+          )}
+
+          {currentView === 'invoices' && (
+            <InvoiceList
+              onCreateNew={() => handleNavigate('create-invoice')}
+              currencySymbol={currencySymbol}
+            />
+          )}
+
+          {currentView === 'estimates' && (
+            <EstimatesView
+              estimates={estimates}
+              currencySymbol={currencySymbol}
+              onNavigate={handleNavigate}
+              onRefresh={loadAppData}
+            />
+          )}
+
+          {currentView === 'settings' && (
+            <SettingsView
+              currencySymbol={currencySymbol}
+              onCurrencyChange={(symbol) => setCurrencySymbol(symbol)}
+            />
+          )}
+
+          {currentView === 'create-invoice' && (
+            <InvoiceCreateForm
+              currencySymbol={currencySymbol}
+              docKind="invoice"
+              initialCustomerId={selectedCustomerIdForForm}
+              onViewInvoicesList={() => handleNavigate('invoices')}
+            />
+          )}
+
+          {currentView === 'create-estimate' && (
+            <InvoiceCreateForm
+              currencySymbol={currencySymbol}
+              docKind="estimate"
+              initialCustomerId={selectedCustomerIdForForm}
+              onViewInvoicesList={() => handleNavigate('estimates')}
+            />
+          )}
+        </main>
+      </div>
     </div>
   );
 };
 
 export default App;
-

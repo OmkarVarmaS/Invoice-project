@@ -5,6 +5,7 @@ import type {
   InvoiceTotals,
   InvoiceWithDetails,
   LineItemFormState,
+  DocumentKind,
 } from '@/types/invoice';
 import { CustomerSelect } from './CustomerSelect';
 import { LineItemsTable } from './LineItemsTable';
@@ -13,13 +14,13 @@ import { InvoiceSuccessModal } from './InvoiceSuccessModal';
 import {
   fetchCustomers,
   fetchNextInvoiceNumber,
+  fetchNextEstimateNumber,
   createDraftInvoice,
 } from '@/services/invoiceService';
 import {
   Calendar,
   FileText,
-  Save,
-  RotateCcw,
+  FileSpreadsheet,
   AlertCircle,
   FileEdit,
 } from 'lucide-react';
@@ -42,17 +43,23 @@ const createInitialItem = (): LineItemFormState => ({
 
 interface InvoiceCreateFormProps {
   currencySymbol?: string;
+  docKind?: DocumentKind;
+  initialCustomerId?: string;
   onViewInvoicesList?: () => void;
 }
 
 export const InvoiceCreateForm: React.FC<InvoiceCreateFormProps> = ({
-  currencySymbol = '$',
+  currencySymbol = '₹',
+  docKind = 'invoice',
+  initialCustomerId,
   onViewInvoicesList,
 }) => {
+  const isEstimate = docKind === 'estimate';
+
   // Form State
   const [formState, setFormState] = useState<InvoiceFormState>(() => {
     try {
-      const saved = sessionStorage.getItem('draft_form_state');
+      const saved = sessionStorage.getItem(`draft_${docKind}_state`);
       if (saved) {
         const parsed = JSON.parse(saved);
         if (
@@ -60,28 +67,33 @@ export const InvoiceCreateForm: React.FC<InvoiceCreateFormProps> = ({
           !parsed.customerId?.startsWith('c1111111') &&
           parsed.notes !== 'Thank you for your business. Please remit payment by the due date.'
         ) {
-          return parsed;
+          return {
+            ...parsed,
+            customerId: initialCustomerId || parsed.customerId,
+            docKind,
+          };
         }
       }
     } catch {}
     return {
-      customerId: '',
-      invoiceNumber: 'INV-001',
+      customerId: initialCustomerId || '',
+      invoiceNumber: isEstimate ? 'EST-2026-0001' : 'INV-2026-0001',
       invoiceDate: defaultToday(),
       dueDate: defaultDueDate(),
       items: [createInitialItem()],
       discountAmount: 0,
-      notes: '',
+      notes: isEstimate ? 'This quote is valid for 30 days.' : '',
       paymentInstructions: '',
+      docKind,
     };
   });
 
   // Save draft state to session storage on changes
   useEffect(() => {
     try {
-      sessionStorage.setItem('draft_form_state', JSON.stringify(formState));
+      sessionStorage.setItem(`draft_${docKind}_state`, JSON.stringify(formState));
     } catch {}
-  }, [formState]);
+  }, [formState, docKind]);
 
   // Customers & Metadata State
   const [customers, setCustomers] = useState<CustomerRow[]>([]);
@@ -94,16 +106,16 @@ export const InvoiceCreateForm: React.FC<InvoiceCreateFormProps> = ({
   const [savedInvoice, setSavedInvoice] = useState<InvoiceWithDetails | null>(null);
   const [isSavedLiveDb, setIsSavedLiveDb] = useState(true);
 
-  // Load Customers and Next Invoice Number
+  // Load Customers and Next Number
   useEffect(() => {
     let isMounted = true;
 
     async function initData() {
       setIsLoadingMetadata(true);
       try {
-        const [customerList, nextInvNum] = await Promise.all([
+        const [customerList, nextNum] = await Promise.all([
           fetchCustomers(),
-          fetchNextInvoiceNumber(),
+          isEstimate ? fetchNextEstimateNumber() : fetchNextInvoiceNumber(),
         ]);
 
         if (!isMounted) return;
@@ -111,9 +123,8 @@ export const InvoiceCreateForm: React.FC<InvoiceCreateFormProps> = ({
         setCustomers(customerList);
         setFormState((prev) => ({
           ...prev,
-          invoiceNumber: nextInvNum || prev.invoiceNumber,
-          // Keep existing customerId if valid, otherwise keep empty
-          customerId: prev.customerId && customerList.some((c) => c.id === prev.customerId) ? prev.customerId : '',
+          invoiceNumber: nextNum || prev.invoiceNumber,
+          customerId: initialCustomerId || (prev.customerId && customerList.some((c) => c.id === prev.customerId) ? prev.customerId : ''),
         }));
       } catch (err) {
         console.error('Failed to initialize form data:', err);
@@ -126,9 +137,9 @@ export const InvoiceCreateForm: React.FC<InvoiceCreateFormProps> = ({
     return () => {
       isMounted = false;
     };
-  }, []);
+  }, [isEstimate, initialCustomerId]);
 
-  // Compute Live Temporary UI Totals for Immediate Visual Feedback
+  // Compute Live Temporary UI Totals
   const liveTotals: InvoiceTotals = useMemo(() => {
     const subtotal = formState.items.reduce((acc, item) => {
       const line = (Number(item.quantity) || 0) * (Number(item.unit_price) || 0);
@@ -184,16 +195,17 @@ export const InvoiceCreateForm: React.FC<InvoiceCreateFormProps> = ({
 
   // Form Reset
   const handleResetForm = async () => {
-    const nextInv = await fetchNextInvoiceNumber();
+    const nextNum = isEstimate ? await fetchNextEstimateNumber() : await fetchNextInvoiceNumber();
     setFormState({
       customerId: '',
-      invoiceNumber: nextInv,
+      invoiceNumber: nextNum,
       invoiceDate: defaultToday(),
       dueDate: defaultDueDate(),
       items: [createInitialItem()],
       discountAmount: 0,
-      notes: '',
+      notes: isEstimate ? 'This quote is valid for 30 days.' : '',
       paymentInstructions: '',
+      docKind,
     });
     setValidationErrors({});
     setErrorMessage(null);
@@ -208,12 +220,12 @@ export const InvoiceCreateForm: React.FC<InvoiceCreateFormProps> = ({
     }
 
     if (!formState.invoiceDate) {
-      errors.invoiceDate = 'Invoice date is required';
+      errors.invoiceDate = `${isEstimate ? 'Estimate' : 'Invoice'} date is required`;
     }
 
     if (formState.dueDate && formState.invoiceDate) {
       if (new Date(formState.dueDate) < new Date(formState.invoiceDate)) {
-        errors.dueDate = 'Due date cannot be before invoice date';
+        errors.dueDate = 'Due date cannot be before issue date';
       }
     }
 
@@ -264,6 +276,7 @@ export const InvoiceCreateForm: React.FC<InvoiceCreateFormProps> = ({
         discountAmount: Number(formState.discountAmount) || 0,
         notes: formState.notes,
         paymentInstructions: formState.paymentInstructions,
+        docKind,
         items: formState.items.map((item) => ({
           description: item.description,
           quantity: Number(item.quantity) || 1,
@@ -277,8 +290,8 @@ export const InvoiceCreateForm: React.FC<InvoiceCreateFormProps> = ({
       setSavedInvoice(result.invoice);
       setIsSavedLiveDb(result.isLiveDb);
     } catch (err: any) {
-      console.error('Error saving invoice draft:', err);
-      setErrorMessage(err.message || 'Failed to save draft invoice. Please try again.');
+      console.error('Error saving document draft:', err);
+      setErrorMessage(err.message || 'Failed to save draft. Please try again.');
     } finally {
       setIsSubmitting(false);
     }
@@ -287,22 +300,40 @@ export const InvoiceCreateForm: React.FC<InvoiceCreateFormProps> = ({
   return (
     <div className="invoice-create-wrapper">
       {/* Page Header */}
-      <div className="page-header">
+      <div className="page-header-row">
         <div className="page-title-group">
-          <h1>Create New Invoice</h1>
-          <p>Prepare draft invoice with line items, tax rates, and database-synced totals</p>
+          <h1>{isEstimate ? 'Create New Estimate' : 'Create New Invoice'}</h1>
+          <p>
+            {isEstimate
+              ? 'Prepare draft estimate with line items, tax rates, and database-synced totals'
+              : 'Prepare draft invoice with line items, tax rates, and database-synced totals'}
+          </p>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+        <div className="page-action-buttons">
           <span className="status-pill draft" id="header-status-pill">
-            <FileEdit size={14} /> Status: Draft
+            <FileEdit size={13} /> STATUS: DRAFT
           </span>
         </div>
       </div>
 
       {/* Global Error Banner */}
       {errorMessage && (
-        <div className="alert alert-danger" id="form-error-banner">
+        <div
+          style={{
+            background: 'var(--danger-50)',
+            color: 'var(--danger-600)',
+            border: '1px solid var(--danger-100)',
+            padding: '0.85rem 1.25rem',
+            borderRadius: 'var(--radius-md)',
+            marginBottom: '1.5rem',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '0.75rem',
+            fontSize: '0.875rem',
+          }}
+          id="form-error-banner"
+        >
           <AlertCircle size={18} />
           <div>
             <strong>Validation Error:</strong> {errorMessage}
@@ -310,23 +341,28 @@ export const InvoiceCreateForm: React.FC<InvoiceCreateFormProps> = ({
         </div>
       )}
 
-      {/* Main Form */}
+      {/* Main Form Layout */}
       <form onSubmit={handleSaveAsDraft}>
-        <div className="invoice-form-grid">
+        <div className="invoice-create-layout">
           {/* Left Column: Form Details & Items */}
-          <div className="form-main-column">
-            {/* 1. Customer & Invoice Meta Card */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+            {/* 1. Customer & Meta Card */}
             <div className="card" id="card-customer-meta">
               <div className="card-header">
                 <h2 className="card-title">
-                  <FileText size={18} /> Invoice Details
+                  {isEstimate ? (
+                    <FileSpreadsheet size={18} style={{ color: 'var(--purple-600)' }} />
+                  ) : (
+                    <FileText size={18} style={{ color: 'var(--primary-600)' }} />
+                  )}
+                  <span>{isEstimate ? 'Estimate Details' : 'Invoice Details'}</span>
                 </h2>
                 <div style={{ fontSize: '0.85rem', color: 'var(--slate-500)' }}>
-                  Number: <strong style={{ color: 'var(--slate-800)' }}>{formState.invoiceNumber}</strong>
+                  Number: <strong style={{ color: 'var(--slate-900)' }}>{formState.invoiceNumber}</strong>
                 </div>
               </div>
 
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+              <div className="card-body">
                 {/* Customer Selector Component */}
                 <CustomerSelect
                   customers={customers}
@@ -340,12 +376,12 @@ export const InvoiceCreateForm: React.FC<InvoiceCreateFormProps> = ({
                   error={validationErrors.customerId}
                 />
 
-                {/* Dates & Invoice Number Grid */}
-                <div className="form-grid-3">
-                  {/* Invoice Number */}
+                {/* Dates & Number Grid */}
+                <div className="form-grid-3" style={{ marginTop: '1.25rem' }}>
+                  {/* Number */}
                   <div className="form-group">
                     <label className="form-label" htmlFor="invoice-number">
-                      Invoice Number <span className="required-asterisk">*</span>
+                      {isEstimate ? 'Estimate Number' : 'Invoice Number'} <span className="required-asterisk">*</span>
                     </label>
                     <input
                       type="text"
@@ -358,47 +394,41 @@ export const InvoiceCreateForm: React.FC<InvoiceCreateFormProps> = ({
                     />
                   </div>
 
-                  {/* Invoice Date */}
+                  {/* Date */}
                   <div className="form-group">
                     <label className="form-label" htmlFor="invoice-date">
-                      Invoice Date <span className="required-asterisk">*</span>
+                      {isEstimate ? 'Estimate Date' : 'Invoice Date'} <span className="required-asterisk">*</span>
                     </label>
                     <div className="input-wrapper">
                       <Calendar size={16} className="input-icon" />
                       <input
                         type="date"
                         id="invoice-date"
-                        className={`form-input has-icon ${validationErrors.invoiceDate ? 'border-danger' : ''}`}
+                        className="form-input"
                         value={formState.invoiceDate}
                         onChange={(e) => setFormState((prev) => ({ ...prev, invoiceDate: e.target.value }))}
                         disabled={isSubmitting}
                         required
                       />
                     </div>
-                    {validationErrors.invoiceDate && (
-                      <span className="form-error">{validationErrors.invoiceDate}</span>
-                    )}
                   </div>
 
-                  {/* Due Date */}
+                  {/* Due Date / Expiry Date */}
                   <div className="form-group">
                     <label className="form-label" htmlFor="due-date">
-                      Due Date
+                      {isEstimate ? 'Expiry Date' : 'Due Date'}
                     </label>
                     <div className="input-wrapper">
                       <Calendar size={16} className="input-icon" />
                       <input
                         type="date"
                         id="due-date"
-                        className={`form-input has-icon ${validationErrors.dueDate ? 'border-danger' : ''}`}
+                        className="form-input"
                         value={formState.dueDate}
                         onChange={(e) => setFormState((prev) => ({ ...prev, dueDate: e.target.value }))}
                         disabled={isSubmitting}
                       />
                     </div>
-                    {validationErrors.dueDate && (
-                      <span className="form-error">{validationErrors.dueDate}</span>
-                    )}
                   </div>
                 </div>
               </div>
@@ -408,24 +438,26 @@ export const InvoiceCreateForm: React.FC<InvoiceCreateFormProps> = ({
             <div className="card" id="card-line-items">
               <div className="card-header">
                 <h2 className="card-title">
-                  <FileText size={18} /> Invoice Items
+                  <FileText size={18} /> {isEstimate ? 'Estimate Items' : 'Invoice Items'}
                 </h2>
                 <span style={{ fontSize: '0.8rem', color: 'var(--slate-500)' }}>
                   Line amount auto-computed per row
                 </span>
               </div>
 
-              <LineItemsTable
-                items={formState.items}
-                onAddItem={handleAddItem}
-                onRemoveItem={handleRemoveItem}
-                onUpdateItem={handleUpdateItem}
-                disabled={isSubmitting}
-                currencySymbol={currencySymbol}
-              />
+              <div style={{ padding: '1.25rem' }}>
+                <LineItemsTable
+                  items={formState.items}
+                  onAddItem={handleAddItem}
+                  onRemoveItem={handleRemoveItem}
+                  onUpdateItem={handleUpdateItem}
+                  disabled={isSubmitting}
+                  currencySymbol={currencySymbol}
+                />
+              </div>
             </div>
 
-            {/* 3. Notes & Additional Instructions Card */}
+            {/* 3. Notes & Instructions Card */}
             <div className="card" id="card-notes">
               <div className="card-header">
                 <h2 className="card-title">
@@ -433,97 +465,55 @@ export const InvoiceCreateForm: React.FC<InvoiceCreateFormProps> = ({
                 </h2>
               </div>
 
-              <div className="form-grid-2">
-                <div className="form-group">
-                  <label className="form-label" htmlFor="invoice-notes">
-                    Notes & Remarks
-                  </label>
-                  <textarea
-                    id="invoice-notes"
-                    className="form-textarea"
-                    placeholder="Provide any additional notes or instructions for the client..."
-                    value={formState.notes}
-                    onChange={(e) => setFormState((prev) => ({ ...prev, notes: e.target.value }))}
-                    disabled={isSubmitting}
-                  />
-                  <span className="form-helper">Visible on the bottom of the invoice</span>
-                </div>
+              <div className="card-body">
+                <div className="form-grid-2">
+                  <div className="form-group">
+                    <label className="form-label" htmlFor="invoice-notes">
+                      Notes & Terms
+                    </label>
+                    <textarea
+                      id="invoice-notes"
+                      className="form-textarea"
+                      placeholder="Provide any additional notes or instructions for the client..."
+                      value={formState.notes}
+                      onChange={(e) => setFormState((prev) => ({ ...prev, notes: e.target.value }))}
+                      disabled={isSubmitting}
+                      rows={3}
+                    />
+                  </div>
 
-                <div className="form-group">
-                  <label className="form-label" htmlFor="invoice-payment-instructions">
-                    Payment Instructions
-                  </label>
-                  <textarea
-                    id="invoice-payment-instructions"
-                    className="form-textarea"
-                    placeholder="Bank details, UPI ID, or remittance guidelines..."
-                    value={formState.paymentInstructions}
-                    onChange={(e) => setFormState((prev) => ({ ...prev, paymentInstructions: e.target.value }))}
-                    disabled={isSubmitting}
-                  />
-                  <span className="form-helper">Bank transfer details or payment terms</span>
+                  <div className="form-group">
+                    <label className="form-label" htmlFor="invoice-payment-instructions">
+                      Payment / Bank Instructions
+                    </label>
+                    <textarea
+                      id="invoice-payment-instructions"
+                      className="form-textarea"
+                      placeholder="Bank details, UPI ID, or remittance guidelines..."
+                      value={formState.paymentInstructions}
+                      onChange={(e) => setFormState((prev) => ({ ...prev, paymentInstructions: e.target.value }))}
+                      disabled={isSubmitting}
+                      rows={3}
+                    />
+                  </div>
                 </div>
               </div>
             </div>
           </div>
 
           {/* Right Column: Sticky Summary & Actions */}
-          <div className="form-sidebar-column">
-            {/* Totals Summary */}
+          <div>
             <InvoiceSummaryCard
               totals={liveTotals}
               discountAmount={formState.discountAmount}
               onDiscountChange={(discount) => setFormState((prev) => ({ ...prev, discountAmount: discount }))}
               disabled={isSubmitting}
+              isSubmitting={isSubmitting}
               currencySymbol={currencySymbol}
+              docKind={docKind}
+              onResetForm={handleResetForm}
+              onViewInvoicesList={onViewInvoicesList}
             />
-
-            {/* Action Buttons */}
-            <div className="card" style={{ padding: '1.25rem' }}>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-                <button
-                  type="submit"
-                  className="btn btn-primary btn-lg btn-block"
-                  disabled={isSubmitting}
-                  id="btn-save-as-draft"
-                >
-                  {isSubmitting ? (
-                    <>
-                      <div className="spinner" /> Saving Draft...
-                    </>
-                  ) : (
-                    <>
-                      <Save size={18} /> Save as Draft
-                    </>
-                  )}
-                </button>
-
-                <button
-                  type="button"
-                  className="btn btn-secondary btn-block"
-                  onClick={handleResetForm}
-                  disabled={isSubmitting}
-                  id="btn-reset-form"
-                >
-                  <RotateCcw size={16} /> Reset Form
-                </button>
-
-                {onViewInvoicesList && (
-                  <button
-                    type="button"
-                    className="btn btn-outline btn-block"
-                    onClick={onViewInvoicesList}
-                    disabled={isSubmitting}
-                  >
-                    View All Saved Invoices
-                  </button>
-                )}
-              </div>
-
-              <div style={{ marginTop: '1rem', textAlign: 'center', fontSize: '0.75rem', color: 'var(--slate-400)' }}>
-                Draft status allows editing line items anytime before sending.
-              </div>
-            </div>
           </div>
         </div>
       </form>

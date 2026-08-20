@@ -199,10 +199,134 @@ export async function fetchNextInvoiceNumber(businessId?: string): Promise<strin
     const currentCount = rawCount ? parseInt(rawCount, 10) : 0;
     const nextCount = currentCount + 1;
     localStorage.setItem(LOCAL_STORAGE_COUNTER_KEY, nextCount.toString());
-    return `INV-${String(nextCount).padStart(3, '0')}`;
+    const year = new Date().getFullYear();
+    return `INV-${year}-${String(nextCount).padStart(4, '0')}`;
   } catch {
-    return `INV-001`;
+    return `INV-2026-0001`;
   }
+}
+
+const LOCAL_STORAGE_ESTIMATES_KEY = 'invoice_craft_estimates';
+const LOCAL_STORAGE_ESTIMATE_COUNTER_KEY = 'invoice_craft_est_counter';
+
+/**
+ * Fetches the next sequential estimate number (e.g. EST-2026-0001)
+ */
+export async function fetchNextEstimateNumber(): Promise<string> {
+  try {
+    const rawCount = localStorage.getItem(LOCAL_STORAGE_ESTIMATE_COUNTER_KEY);
+    const currentCount = rawCount ? parseInt(rawCount, 10) : 0;
+    const nextCount = currentCount + 1;
+    localStorage.setItem(LOCAL_STORAGE_ESTIMATE_COUNTER_KEY, nextCount.toString());
+    const year = new Date().getFullYear();
+    return `EST-${year}-${String(nextCount).padStart(4, '0')}`;
+  } catch {
+    return `EST-2026-0001`;
+  }
+}
+
+/**
+ * Fetch all estimates from local storage / cache.
+ */
+export async function listAllEstimates(): Promise<InvoiceWithDetails[]> {
+  try {
+    const raw = localStorage.getItem(LOCAL_STORAGE_ESTIMATES_KEY);
+    if (raw) {
+      const parsed: InvoiceWithDetails[] = JSON.parse(raw);
+      return parsed.map(item => ({ ...item, doc_kind: 'estimate' as const }));
+    }
+  } catch {}
+  return [];
+}
+
+/**
+ * Create or save an estimate
+ */
+export async function createDraftEstimate(
+  payload: CreateInvoicePayload
+): Promise<{ invoice: InvoiceWithDetails; isLiveDb: boolean }> {
+  const bId = payload.businessId || (await getActiveBusinessId());
+  
+  const computedItems = payload.items.map((item, idx) => {
+    const qty = Number(item.quantity) || 0;
+    const price = Number(item.unit_price) || 0;
+    const taxRate = Number(item.tax_rate) || 0;
+    const lineAmount = Math.round(qty * price * 100) / 100;
+
+    return {
+      id: `est_item_${Date.now()}_${idx}`,
+      invoice_id: `est_${Date.now()}`,
+      description: item.description.trim(),
+      quantity: qty,
+      unit_price: price,
+      tax_rate: taxRate,
+      line_amount: lineAmount,
+      created_at: new Date().toISOString(),
+    };
+  });
+
+  const subtotal = computedItems.reduce((acc, it) => acc + it.line_amount, 0);
+  const taxAmount = computedItems.reduce(
+    (acc, it) => acc + Math.round((it.line_amount * it.tax_rate) / 100 * 100) / 100,
+    0
+  );
+  const discountAmount = Number(payload.discountAmount) || 0;
+  const totalAmount = Math.max(0, Math.round((subtotal + taxAmount - discountAmount) * 100) / 100);
+
+  const customers = await fetchCustomers();
+  const customer = customers.find((c) => c.id === payload.customerId) || null;
+
+  const estimateRecord: InvoiceWithDetails = {
+    id: `est_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+    business_id: bId,
+    customer_id: payload.customerId,
+    invoice_number: payload.invoiceNumber || (await fetchNextEstimateNumber()),
+    status: 'draft',
+    invoice_date: payload.invoiceDate || new Date().toISOString().split('T')[0],
+    due_date: payload.dueDate || null,
+    subtotal,
+    tax_amount: taxAmount,
+    discount_amount: discountAmount,
+    total_amount: totalAmount,
+    notes: payload.notes?.trim() || null,
+    payment_instructions: payload.paymentInstructions?.trim() || null,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+    customer,
+    items: computedItems,
+    doc_kind: 'estimate',
+  };
+
+  try {
+    const existing = await listAllEstimates();
+    localStorage.setItem(
+      LOCAL_STORAGE_ESTIMATES_KEY,
+      JSON.stringify([estimateRecord, ...existing.filter((e) => e.id !== estimateRecord.id)])
+    );
+  } catch (e) {
+    console.error('Failed to save estimate locally:', e);
+  }
+
+  return { invoice: estimateRecord, isLiveDb: false };
+}
+
+/**
+ * Fetch all documents (invoices and estimates combined for recent activity)
+ */
+export async function listRecentDocuments(limit = 10): Promise<InvoiceWithDetails[]> {
+  const [invoices, estimates] = await Promise.all([
+    listAllInvoices(),
+    listAllEstimates(),
+  ]);
+
+  const taggedInvoices = invoices.map(i => ({ ...i, doc_kind: 'invoice' as const }));
+  const taggedEstimates = estimates.map(e => ({ ...e, doc_kind: 'estimate' as const }));
+
+  const combined = [...taggedInvoices, ...taggedEstimates].sort(
+    (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+  );
+
+  return combined.slice(0, limit);
 }
 
 export interface CreateInvoicePayload {
@@ -213,6 +337,7 @@ export interface CreateInvoicePayload {
   discountAmount: number;
   notes: string | null;
   paymentInstructions?: string | null;
+  docKind?: 'invoice' | 'estimate';
   items: Array<{
     description: string;
     quantity: number;
@@ -228,6 +353,9 @@ export interface CreateInvoicePayload {
 export async function createDraftInvoice(
   payload: CreateInvoicePayload
 ): Promise<{ invoice: InvoiceWithDetails; isLiveDb: boolean }> {
+  if (payload.docKind === 'estimate') {
+    return createDraftEstimate(payload);
+  }
   const bId = payload.businessId || (await getActiveBusinessId());
 
   if (isSupabaseConfigured) {
@@ -288,7 +416,10 @@ export async function createDraftInvoice(
 
       if (!refreshError && refreshedInvoice) {
         return {
-          invoice: refreshedInvoice as unknown as InvoiceWithDetails,
+          invoice: {
+            ...(refreshedInvoice as unknown as InvoiceWithDetails),
+            doc_kind: 'invoice',
+          },
           isLiveDb: true,
         };
       }
@@ -297,6 +428,7 @@ export async function createDraftInvoice(
         invoice: {
           ...headerData,
           items: itemsData || [],
+          doc_kind: 'invoice',
         },
         isLiveDb: true,
       };
@@ -353,6 +485,7 @@ export async function createDraftInvoice(
     updated_at: new Date().toISOString(),
     customer,
     items: computedItems,
+    doc_kind: 'invoice',
   };
 
   // Save to local storage
@@ -398,7 +531,7 @@ export async function listAllInvoices(businessId?: string): Promise<InvoiceWithD
             inv.customer?.name !== 'Starlight Technologies' &&
             inv.customer?.name !== 'Nexus Retail Pvt Ltd' &&
             inv.customer?.name !== 'Apex Logistics Corp'
-        ) as unknown as InvoiceWithDetails[];
+        ).map(i => ({ ...i, doc_kind: 'invoice' as const })) as unknown as InvoiceWithDetails[];
       }
     } catch (err) {
       console.warn('Could not fetch invoices from Supabase, falling back:', err);
@@ -418,11 +551,38 @@ export async function listAllInvoices(businessId?: string): Promise<InvoiceWithD
           !inv.id.startsWith('a1111111') &&
           !inv.id.startsWith('a2222222') &&
           !inv.id.startsWith('a3333333')
-      );
+      ).map(i => ({ ...i, doc_kind: 'invoice' as const }));
     }
   } catch {}
 
   return [];
+}
+
+/**
+ * Update invoice status (e.g. mark as 'paid' or 'sent')
+ */
+export async function updateInvoiceStatus(invoiceId: string, status: 'draft' | 'sent' | 'paid'): Promise<boolean> {
+  if (isSupabaseConfigured) {
+    try {
+      const { error } = await supabase
+        .from('invoices')
+        .update({ status, updated_at: new Date().toISOString() })
+        .eq('id', invoiceId);
+      if (!error) return true;
+    } catch {}
+  }
+
+  // Local fallback
+  try {
+    const raw = localStorage.getItem(LOCAL_STORAGE_INVOICES_KEY);
+    if (raw) {
+      const parsed: InvoiceWithDetails[] = JSON.parse(raw);
+      const updated = parsed.map((inv) => (inv.id === invoiceId ? { ...inv, status } : inv));
+      localStorage.setItem(LOCAL_STORAGE_INVOICES_KEY, JSON.stringify(updated));
+      return true;
+    }
+  } catch {}
+  return false;
 }
 
 /**
@@ -445,15 +605,16 @@ export async function fetchBusinessProfile() {
 
   return {
     id: 'b1111111-1111-1111-1111-111111111111',
-    name: 'Your Company Name',
+    name: 'DenveX Solutions',
     logo_url: '',
-    email: 'contact@yourcompany.com',
-    phone: '+1 (555) 000-0000',
-    address: '123 Business Street, Suite 100, City, Country',
-    gstin: '',
-    default_currency: 'USD',
+    email: 'admin.denvex@gmail.com',
+    phone: '+91 98765 43210',
+    address: 'DenveX HQ, Cyber City, Bangalore, India',
+    gstin: '29ABCDE1234F1Z5',
+    default_currency: 'INR',
     invoice_prefix: 'INV',
     invoice_counter: 0,
   };
 }
+
 

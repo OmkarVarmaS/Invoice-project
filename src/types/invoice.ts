@@ -8,7 +8,17 @@ export type InvoiceInsert = Database['public']['Tables']['invoices']['Insert'];
 export type InvoiceItemRow = Database['public']['Tables']['invoice_items']['Row'];
 export type InvoiceItemInsert = Database['public']['Tables']['invoice_items']['Insert'];
 
-export type InvoiceStatus = 'draft' | 'sent' | 'paid';
+export type InvoiceStatus = 'draft' | 'sent' | 'paid' | 'approved' | 'declined';
+export type DocumentKind = 'invoice' | 'estimate';
+
+export type AppView = 
+  | 'dashboard' 
+  | 'clients' 
+  | 'invoices' 
+  | 'estimates' 
+  | 'settings' 
+  | 'create-invoice' 
+  | 'create-estimate';
 
 export interface LineItemFormState {
   id: string; // Temporary client key for rendering and list keys
@@ -28,6 +38,7 @@ export interface InvoiceFormState {
   discountAmount: number;
   notes: string;
   paymentInstructions?: string;
+  docKind?: DocumentKind;
 }
 
 export interface InvoiceTotals {
@@ -40,4 +51,6 @@ export interface InvoiceTotals {
 export interface InvoiceWithDetails extends InvoiceRow {
   customer?: CustomerRow | null;
   items?: InvoiceItemRow[];
+  doc_kind?: DocumentKind;
 }
+

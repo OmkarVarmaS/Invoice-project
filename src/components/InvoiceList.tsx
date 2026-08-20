@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import type { InvoiceWithDetails } from '@/types/invoice';
-import { listAllInvoices } from '@/services/invoiceService';
+import { listAllInvoices, updateInvoiceStatus } from '@/services/invoiceService';
 import { InvoicePreviewModal } from './InvoicePreviewModal';
 import {
   FileText,
@@ -8,8 +8,8 @@ import {
   Eye,
   Plus,
   RefreshCw,
-  Building,
-  Layers,
+  CheckCircle,
+  Clock,
 } from 'lucide-react';
 
 interface InvoiceListProps {
@@ -19,7 +19,7 @@ interface InvoiceListProps {
 
 export const InvoiceList: React.FC<InvoiceListProps> = ({
   onCreateNew,
-  currencySymbol = '$',
+  currencySymbol = '₹',
 }) => {
   const [invoices, setInvoices] = useState<InvoiceWithDetails[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -43,6 +43,11 @@ export const InvoiceList: React.FC<InvoiceListProps> = ({
     loadInvoices();
   }, []);
 
+  const handleStatusChange = async (invoiceId: string, newStatus: 'draft' | 'sent' | 'paid') => {
+    await updateInvoiceStatus(invoiceId, newStatus);
+    loadInvoices();
+  };
+
   const filteredInvoices = invoices.filter((inv) => {
     const matchesStatus = statusFilter === 'all' || inv.status === statusFilter;
     const matchesSearch =
@@ -63,206 +68,254 @@ export const InvoiceList: React.FC<InvoiceListProps> = ({
 
   return (
     <div className="invoices-list-wrapper">
-      {/* Overview Cards */}
-      <div className="form-grid-3" style={{ marginBottom: '1.5rem' }}>
-        <div className="card" style={{ padding: '1.25rem' }}>
-          <div style={{ fontSize: '0.8rem', color: 'var(--slate-500)', fontWeight: 600, textTransform: 'uppercase' }}>
-            Total Invoices
+      {/* Header */}
+      <div className="page-header-row">
+        <div className="page-title-group">
+          <h1>Invoices</h1>
+          <p>Manage, track payment statuses, and review invoice records.</p>
+        </div>
+
+        <div className="page-action-buttons">
+          <button
+            type="button"
+            className="btn btn-secondary"
+            onClick={loadInvoices}
+            title="Refresh list"
+          >
+            <RefreshCw size={15} className={isLoading ? 'spinner' : ''} /> Refresh
+          </button>
+
+          <button
+            type="button"
+            className="btn btn-primary"
+            onClick={onCreateNew}
+            id="btn-list-create-invoice"
+          >
+            <Plus size={16} /> New Invoice
+          </button>
+        </div>
+      </div>
+
+      {/* KPI Overview Cards */}
+      <div className="kpi-grid" style={{ marginBottom: '1.5rem' }}>
+        <div className="kpi-card">
+          <div className="kpi-top">
+            <span className="kpi-label">Total Invoices</span>
+            <div className="kpi-icon-badge">
+              <FileText size={18} />
+            </div>
           </div>
-          <div style={{ fontSize: '1.8rem', fontWeight: 800, color: 'var(--slate-900)', marginTop: '4px' }}>
-            {invoices.length}
+          <div className="kpi-value">{invoices.length}</div>
+        </div>
+
+        <div className="kpi-card">
+          <div className="kpi-top">
+            <span className="kpi-label">Pending / Drafts</span>
+            <div className="kpi-icon-badge purple">
+              <Clock size={18} />
+            </div>
           </div>
-          <div style={{ fontSize: '0.8rem', color: 'var(--slate-400)', marginTop: '4px' }}>
-            Stored in Supabase
+          <div className="kpi-value">
+            {currencySymbol}
+            {pendingDraftAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
           </div>
         </div>
 
-        <div className="card" style={{ padding: '1.25rem' }}>
-          <div style={{ fontSize: '0.8rem', color: 'var(--slate-500)', fontWeight: 600, textTransform: 'uppercase' }}>
-            Pending & Drafts
+        <div className="kpi-card">
+          <div className="kpi-top">
+            <span className="kpi-label">Paid / Settled</span>
+            <div className="kpi-icon-badge green">
+              <CheckCircle size={18} />
+            </div>
           </div>
-          <div style={{ fontSize: '1.8rem', fontWeight: 800, color: '#b45309', marginTop: '4px', fontFamily: 'var(--font-mono)' }}>
-            {currencySymbol}{pendingDraftAmount.toFixed(2)}
-          </div>
-          <div style={{ fontSize: '0.8rem', color: 'var(--slate-400)', marginTop: '4px' }}>
-            Draft & Sent status
-          </div>
-        </div>
-
-        <div className="card" style={{ padding: '1.25rem' }}>
-          <div style={{ fontSize: '0.8rem', color: 'var(--slate-500)', fontWeight: 600, textTransform: 'uppercase' }}>
-            Paid Settled
-          </div>
-          <div style={{ fontSize: '1.8rem', fontWeight: 800, color: 'var(--success-600)', marginTop: '4px', fontFamily: 'var(--font-mono)' }}>
-            {currencySymbol}{totalRevenue.toFixed(2)}
-          </div>
-          <div style={{ fontSize: '0.8rem', color: 'var(--slate-400)', marginTop: '4px' }}>
-            Settled in full
+          <div className="kpi-value" style={{ color: 'var(--success-700)' }}>
+            {currencySymbol}
+            {totalRevenue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
           </div>
         </div>
       </div>
 
-      {/* List Card */}
-      <div className="card">
-        <div className="card-header" style={{ flexWrap: 'wrap', gap: '1rem' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-            <h2 className="card-title">
-              <Layers size={18} /> Invoices History
-            </h2>
-            <button
-              type="button"
-              className="btn btn-secondary btn-sm"
-              onClick={loadInvoices}
-              title="Refresh from Supabase"
-            >
-              <RefreshCw size={14} className={isLoading ? 'spinner' : ''} /> Refresh
-            </button>
+      {/* Search & Filters */}
+      <div className="card" style={{ marginBottom: '1.5rem' }}>
+        <div style={{ padding: '1rem 1.25rem', display: 'flex', gap: '1rem', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div className="input-wrapper" style={{ flex: '1', minWidth: '240px' }}>
+            <Search size={16} className="input-icon" />
+            <input
+              type="text"
+              className="form-input"
+              placeholder="Search by invoice number, client name, or notes..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              id="input-search-invoices"
+            />
           </div>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
-            {/* Search Input */}
-            <div className="input-wrapper" style={{ width: '220px' }}>
-              <Search size={14} className="input-icon" />
-              <input
-                type="text"
-                className="form-input has-icon"
-                style={{ padding: '0.4rem 0.75rem 0.4rem 2.2rem', fontSize: '0.85rem' }}
-                placeholder="Search invoice or client..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-              />
-            </div>
-
-            {/* Status Filter Buttons */}
-            <div style={{ display: 'flex', gap: '4px', background: 'var(--slate-100)', padding: '3px', borderRadius: 'var(--radius-md)' }}>
-              {(['all', 'draft', 'sent', 'paid'] as const).map((st) => (
-                <button
-                  key={st}
-                  type="button"
-                  onClick={() => setStatusFilter(st)}
-                  style={{
-                    padding: '0.3rem 0.65rem',
-                    fontSize: '0.78rem',
-                    fontWeight: 600,
-                    borderRadius: 'var(--radius-sm)',
-                    background: statusFilter === st ? '#ffffff' : 'transparent',
-                    color: statusFilter === st ? 'var(--slate-900)' : 'var(--slate-500)',
-                    boxShadow: statusFilter === st ? 'var(--shadow-xs)' : 'none',
-                    textTransform: 'capitalize',
-                  }}
-                >
-                  {st}
-                </button>
-              ))}
-            </div>
-
-            <button
-              type="button"
-              className="btn btn-primary btn-sm"
-              onClick={onCreateNew}
-              id="btn-list-create-new"
-            >
-              <Plus size={14} /> New Invoice
-            </button>
+          {/* Filter Pills */}
+          <div style={{ display: 'flex', gap: '4px', background: 'var(--slate-100)', padding: '3px', borderRadius: 'var(--radius-md)' }}>
+            {(['all', 'draft', 'sent', 'paid'] as const).map((st) => (
+              <button
+                key={st}
+                type="button"
+                onClick={() => setStatusFilter(st)}
+                style={{
+                  padding: '0.35rem 0.85rem',
+                  fontSize: '0.8rem',
+                  fontWeight: 700,
+                  borderRadius: 'var(--radius-sm)',
+                  background: statusFilter === st ? '#ffffff' : 'transparent',
+                  color: statusFilter === st ? 'var(--slate-900)' : 'var(--slate-500)',
+                  boxShadow: statusFilter === st ? 'var(--shadow-xs)' : 'none',
+                  textTransform: 'capitalize',
+                  transition: 'all 150ms ease',
+                }}
+              >
+                {st}
+              </button>
+            ))}
           </div>
         </div>
+      </div>
 
-        {/* Invoices Table */}
-        <div className="items-table-container">
-          <table className="items-table">
-            <thead>
-              <tr>
-                <th style={{ width: '130px' }}>Invoice #</th>
-                <th>Customer</th>
-                <th>Date</th>
-                <th>Due Date</th>
-                <th>Items</th>
-                <th style={{ textAlign: 'right' }}>Total</th>
-                <th style={{ textAlign: 'center', width: '100px' }}>Status</th>
-                <th style={{ textAlign: 'center', width: '90px' }}>Action</th>
-              </tr>
-            </thead>
-            <tbody>
-              {isLoading ? (
+      {/* Invoices Table Card */}
+      <div className="card">
+        <div className="card-header">
+          <h2 className="card-title">
+            <FileText size={18} /> Invoices ({filteredInvoices.length})
+          </h2>
+        </div>
+
+        <div className="recent-docs-table-wrapper">
+          {filteredInvoices.length === 0 ? (
+            <div style={{ padding: '3.5rem 1.5rem', textAlign: 'center' }}>
+              <div
+                style={{
+                  width: '50px',
+                  height: '50px',
+                  borderRadius: '50%',
+                  background: 'var(--slate-100)',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  color: 'var(--slate-400)',
+                  marginBottom: '1rem',
+                }}
+              >
+                <FileText size={24} />
+              </div>
+              <h3 style={{ fontSize: '1.05rem', fontWeight: 700, color: 'var(--slate-800)', marginBottom: '0.35rem' }}>
+                {searchQuery ? 'No invoices found matching search' : 'No invoices saved yet'}
+              </h3>
+              <p style={{ fontSize: '0.875rem', color: 'var(--slate-500)', marginBottom: '1.25rem' }}>
+                {searchQuery
+                  ? 'Try searching with a different keyword.'
+                  : 'Prepare and generate your first customer invoice.'}
+              </p>
+              {!searchQuery && (
+                <button
+                  type="button"
+                  className="btn btn-primary btn-sm"
+                  onClick={onCreateNew}
+                >
+                  <Plus size={14} /> Create First Invoice
+                </button>
+              )}
+            </div>
+          ) : (
+            <table className="data-table">
+              <thead>
                 <tr>
-                  <td colSpan={8} style={{ textAlign: 'center', padding: '2rem', color: 'var(--slate-400)' }}>
-                    Loading invoices from database...
-                  </td>
+                  <th>Document</th>
+                  <th>Client</th>
+                  <th>Date</th>
+                  <th>Due Date</th>
+                  <th>Total</th>
+                  <th>Status</th>
+                  <th style={{ textAlign: 'right' }}>Actions</th>
                 </tr>
-              ) : filteredInvoices.length === 0 ? (
-                <tr>
-                  <td colSpan={8} style={{ textAlign: 'center', padding: '3rem', color: 'var(--slate-500)' }}>
-                    <FileText size={36} style={{ margin: '0 auto 0.75rem', opacity: 0.3 }} />
-                    <div style={{ fontWeight: 600, fontSize: '1rem' }}>No Invoices Found</div>
-                    <p style={{ fontSize: '0.85rem', color: 'var(--slate-400)', marginTop: '4px' }}>
-                      {searchQuery ? 'Try adjusting your search filters' : 'Create your first draft invoice to get started.'}
-                    </p>
-                    {!searchQuery && (
-                      <button
-                        type="button"
-                        className="btn btn-primary btn-sm"
-                        style={{ marginTop: '1rem' }}
-                        onClick={onCreateNew}
-                      >
-                        <Plus size={14} /> Create Invoice
-                      </button>
-                    )}
-                  </td>
-                </tr>
-              ) : (
-                filteredInvoices.map((inv) => (
+              </thead>
+              <tbody>
+                {filteredInvoices.map((inv) => (
                   <tr key={inv.id}>
-                    <td style={{ fontWeight: 800, color: 'var(--slate-900)', fontFamily: 'var(--font-mono)' }}>
-                      {inv.invoice_number}
-                    </td>
                     <td>
-                      <div style={{ fontWeight: 600, color: 'var(--slate-800)', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                        <Building size={13} style={{ color: 'var(--slate-400)' }} />
-                        {inv.customer?.name || 'Customer'}
-                      </div>
-                      {inv.customer?.email && (
-                        <div style={{ fontSize: '0.75rem', color: 'var(--slate-400)' }}>
-                          {inv.customer.email}
+                      <div className="doc-info-cell">
+                        <div className="doc-icon-pill invoice">
+                          <FileText size={16} />
                         </div>
-                      )}
+                        <div>
+                          <div className="doc-number">{inv.invoice_number}</div>
+                          <div className="doc-sublabel">Tax Invoice</div>
+                        </div>
+                      </div>
                     </td>
-                    <td style={{ fontSize: '0.85rem', color: 'var(--slate-600)' }}>
-                      {inv.invoice_date}
-                    </td>
-                    <td style={{ fontSize: '0.85rem', color: 'var(--slate-500)' }}>
-                      {inv.due_date || '—'}
-                    </td>
-                    <td style={{ fontSize: '0.85rem', color: 'var(--slate-600)' }}>
-                      {inv.items?.length || 0} items
-                    </td>
-                    <td style={{ textAlign: 'right', fontWeight: 700, fontFamily: 'var(--font-mono)', fontSize: '0.95rem', color: 'var(--slate-900)' }}>
-                      {currencySymbol}{Number(inv.total_amount).toFixed(2)}
-                    </td>
-                    <td style={{ textAlign: 'center' }}>
-                      <span className={`status-pill ${inv.status}`} style={{ fontSize: '0.7rem' }}>
-                        {inv.status}
+
+                    <td>
+                      <span className="client-name-cell">
+                        {inv.customer?.name || 'Walk-in Client'}
                       </span>
                     </td>
-                    <td style={{ textAlign: 'center' }}>
+
+                    <td>
+                      <span className="doc-date-cell">
+                        {new Date(inv.invoice_date).toLocaleDateString('en-GB', {
+                          day: '2-digit',
+                          month: 'short',
+                          year: 'numeric',
+                        })}
+                      </span>
+                    </td>
+
+                    <td>
+                      <span className="doc-date-cell">
+                        {inv.due_date ? new Date(inv.due_date).toLocaleDateString('en-GB', {
+                          day: '2-digit',
+                          month: 'short',
+                          year: 'numeric',
+                        }) : '—'}
+                      </span>
+                    </td>
+
+                    <td>
+                      <span className="doc-total-cell">
+                        {currencySymbol}
+                        {(Number(inv.total_amount) || 0).toLocaleString(undefined, {
+                          minimumFractionDigits: 2,
+                          maximumFractionDigits: 2,
+                        })}
+                      </span>
+                    </td>
+
+                    <td>
+                      <select
+                        className={`status-pill ${inv.status}`}
+                        value={inv.status}
+                        onChange={(e) => handleStatusChange(inv.id, e.target.value as any)}
+                        style={{ cursor: 'pointer', outline: 'none' }}
+                        title="Click to update status"
+                      >
+                        <option value="draft">DRAFT</option>
+                        <option value="sent">SENT</option>
+                        <option value="paid">PAID</option>
+                      </select>
+                    </td>
+
+                    <td style={{ textAlign: 'right' }}>
                       <button
                         type="button"
                         className="btn btn-secondary btn-sm"
-                        style={{ padding: '0.3rem 0.6rem' }}
                         onClick={() => setPreviewInvoice(inv)}
-                        title="View / Print Invoice"
+                        title="Preview / Print / PDF"
                       >
-                        <Eye size={14} /> View
+                        <Eye size={14} /> Preview
                       </button>
                     </td>
                   </tr>
-                ))
-              )}
-            </tbody>
-          </table>
+                ))}
+              </tbody>
+            </table>
+          )}
         </div>
       </div>
 
-      {/* Invoice Preview Modal */}
       {previewInvoice && (
         <InvoicePreviewModal
           invoice={previewInvoice}
