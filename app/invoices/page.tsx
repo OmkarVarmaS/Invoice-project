@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from 'react';
 import Sidebar from '@/components/Sidebar';
 import Header from '@/components/Header';
-import { supabase, subscribeToDataChanges, triggerGlobalSync } from '@/lib/supabaseClient';
+import { supabase, subscribeToDataChanges, triggerGlobalSync, getStoredTable } from '@/lib/supabaseClient';
 import Link from 'next/link';
 import { formatCurrency } from '@/lib/currencyHelper';
 import DenvexLogo from '@/components/DenvexLogo';
@@ -22,6 +22,17 @@ function InvoicesContent() {
 
   useEffect(() => {
     async function loadInvoices() {
+      // Instant local hydration (0ms)
+      const localInvoices = getStoredTable('invoices');
+      const localCustomers = getStoredTable('customers');
+      if (localInvoices && localInvoices.length > 0) {
+        setInvoices(localInvoices.filter((item: any) => item.doc_type === 'INVOICE' || !item.doc_type));
+        setLoading(false);
+      }
+      if (localCustomers && localCustomers.length > 0) {
+        setCustomers(localCustomers);
+      }
+
       try {
         const { data: userRes } = await supabase.auth.getSession();
         const userId = userRes.session?.user?.id || 'usr_denvex_admin_001';
@@ -120,10 +131,12 @@ function InvoicesContent() {
 
   const filteredInvoices = invoices.filter((inv) => {
     const cust = getCustomerForInvoice(inv.customer_id);
+    const clientDisplayName = inv.client_name || cust?.name || inv.customer_name || '';
     const matchesQuery =
       inv.invoice_number?.toLowerCase().includes(searchQuery.toLowerCase()) ||
       inv.issue_date?.includes(searchQuery) ||
       inv.notes?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      clientDisplayName.toLowerCase().includes(searchQuery.toLowerCase()) ||
       (cust && cust.name?.toLowerCase().includes(searchQuery.toLowerCase()));
 
     const matchesStatus = statusFilter === 'ALL' || inv.status?.toUpperCase() === statusFilter;
@@ -214,6 +227,8 @@ function InvoicesContent() {
                   <tbody className="divide-y divide-slate-100 font-medium bg-white">
                     {filteredInvoices.map((inv) => {
                       const client = getCustomerForInvoice(inv.customer_id);
+                      const clientDisplayName = inv.client_name || client?.name || inv.customer_name || 'Client';
+                      const clientCompany = client?.company && client.company.toLowerCase() !== clientDisplayName.toLowerCase() ? client.company : '';
                       const status = inv.status?.toUpperCase() || 'UNPAID';
                       const invCurrency = inv.currency || 'INR';
                       return (
@@ -224,8 +239,8 @@ function InvoicesContent() {
                             </span>
                           </td>
                           <td className="py-4 px-4 sm:px-5 whitespace-nowrap">
-                            <div className="font-bold text-slate-900">{client?.name || 'Devi Times'}</div>
-                            {client?.company && <div className="text-[11px] text-slate-400 font-medium">{client.company}</div>}
+                            <div className="font-bold text-slate-900">{clientDisplayName}</div>
+                            {clientCompany && <div className="text-[11px] text-slate-400 font-medium">{clientCompany}</div>}
                           </td>
                           <td className="py-4 px-4 sm:px-5 text-slate-600 font-medium whitespace-nowrap">{inv.issue_date || 'N/A'}</td>
                           <td className="py-4 px-4 sm:px-5 text-slate-600 font-medium whitespace-nowrap">{inv.due_date || 'N/A'}</td>
@@ -282,10 +297,10 @@ function InvoicesContent() {
         {/* Quick View Invoice Modal (Minimalist Professional Image 2 Design) */}
         {selectedInvoice && (() => {
           const client = getCustomerForInvoice(selectedInvoice.customer_id);
-          const clientName = client?.name || 'Devi Times';
-          const clientAddress = client?.address || 'Bus stop, kanchipuram 631502';
-          const clientEmail = client?.email || 'dtcrajesh099415@gmail.com';
-          const clientPhone = client?.phone || '+91 7418956115';
+          const clientName = selectedInvoice.client_name || client?.name || selectedInvoice.customer_name || 'Client';
+          const clientAddress = selectedInvoice.client_address || client?.address || 'Client Address';
+          const clientEmail = selectedInvoice.client_email || client?.email || '';
+          const clientPhone = selectedInvoice.client_phone || client?.phone || '';
           const invCurrency = selectedInvoice.currency || 'INR';
           const amount = Number(selectedInvoice.amount || 0);
           const subtotal = Number(selectedInvoice.subtotal || amount);

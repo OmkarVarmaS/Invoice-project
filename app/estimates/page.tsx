@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from 'react';
 import Sidebar from '@/components/Sidebar';
 import Header from '@/components/Header';
-import { supabase, subscribeToDataChanges, triggerGlobalSync } from '@/lib/supabaseClient';
+import { supabase, subscribeToDataChanges, triggerGlobalSync, getStoredTable } from '@/lib/supabaseClient';
 import Link from 'next/link';
 import { formatCurrency } from '@/lib/currencyHelper';
 import DenvexLogo from '@/components/DenvexLogo';
@@ -171,12 +171,14 @@ function EstimatesContent() {
                   <tbody className="divide-y divide-slate-100">
                     {filteredEstimates.map((est) => {
                       const client = getCustomerForEstimate(est.customer_id);
+                      const clientDisplayName = est.client_name || client?.name || est.customer_name || 'Client';
+                      const clientCompany = client?.company && client.company.toLowerCase() !== clientDisplayName.toLowerCase() ? client.company : '';
                       return (
                         <tr key={est.id} className="hover:bg-slate-50/80 transition">
                           <td className="py-4 px-4 sm:px-5 font-bold font-mono text-[#0B2A5B] whitespace-nowrap">{est.invoice_number}</td>
                           <td className="py-4 px-4 sm:px-5 whitespace-nowrap">
-                            <div className="font-bold text-slate-900">{client?.name || 'Devi Times'}</div>
-                            {client?.company && <div className="text-[11px] text-slate-400 font-medium">{client.company}</div>}
+                            <div className="font-bold text-slate-900">{clientDisplayName}</div>
+                            {clientCompany && <div className="text-[11px] text-slate-400 font-medium">{clientCompany}</div>}
                           </td>
                           <td className="py-4 px-4 sm:px-5 font-medium text-slate-600 whitespace-nowrap">{est.issue_date || 'N/A'}</td>
                           <td className="py-4 px-4 sm:px-5 font-medium text-slate-600 whitespace-nowrap">Valid 15 Days</td>
@@ -220,10 +222,10 @@ function EstimatesContent() {
         {/* Quick View Estimate Modal */}
         {selectedEstimate && (() => {
           const client = getCustomerForEstimate(selectedEstimate.customer_id);
-          const clientName = client?.name || 'Devi Times';
-          const clientAddress = client?.address || 'Bus stop, kanchipuram 631502';
-          const clientEmail = client?.email || 'dtcrajesh099415@gmail.com';
-          const clientPhone = client?.phone || '+91 7418956115';
+          const clientName = selectedEstimate.client_name || client?.name || selectedEstimate.customer_name || 'Client';
+          const clientAddress = selectedEstimate.client_address || client?.address || 'Client Address';
+          const clientEmail = selectedEstimate.client_email || client?.email || '';
+          const clientPhone = selectedEstimate.client_phone || client?.phone || '';
           const estCurrency = selectedEstimate.currency || 'INR';
           const amount = Number(selectedEstimate.amount || 0);
           const subtotal = Number(selectedEstimate.subtotal || amount);

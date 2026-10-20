@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from 'react';
 import Sidebar from '@/components/Sidebar';
 import Header from '@/components/Header';
-import { supabase, subscribeToDataChanges, triggerGlobalSync } from '@/lib/supabaseClient';
+import { supabase, subscribeToDataChanges, triggerGlobalSync, getStoredTable } from '@/lib/supabaseClient';
 import { Database } from '@/types/database.types';
 import Link from 'next/link';
 import { formatCurrency } from '@/lib/currencyHelper';
@@ -11,7 +11,7 @@ import DenvexLogo from '@/components/DenvexLogo';
 import { DENVEX_LOGO_DATA_URI } from '@/lib/logoData';
 import AuthGuard from '@/components/AuthGuard';
 
-type Invoice = Database['public']['Tables']['invoices']['Row'] & { currency?: string };
+type Invoice = Database['public']['Tables']['invoices']['Row'] & { currency?: string; client_name?: string; customer_name?: string; client_address?: string; client_email?: string; client_phone?: string; };
 type Customer = Database['public']['Tables']['customers']['Row'] & { preferred_currency?: string };
 
 function DashboardContent() {
@@ -26,6 +26,16 @@ function DashboardContent() {
 
   const fetchDashboardData = async (isInitial = false) => {
     if (isInitial) setLoading(true);
+    // Instant local hydration (0ms)
+    const localInvoices = getStoredTable('invoices');
+    const localCustomers = getStoredTable('customers');
+    if (localInvoices && localInvoices.length > 0) {
+      setInvoices(localInvoices as Invoice[]);
+      setLoading(false);
+    }
+    if (localCustomers && localCustomers.length > 0) {
+      setCustomers(localCustomers as Customer[]);
+    }
     try {
       const { data: userRes } = await supabase.auth.getSession();
       const userId = userRes.session?.user?.id || 'usr_denvex_admin_001';
@@ -79,10 +89,12 @@ function DashboardContent() {
     return customers.find((c) => c.id === customerId) || null;
   };
 
-  const getCustomerName = (customerId: string | null) => {
-    if (!customerId) return 'Devi Times';
+  const getCustomerName = (customerId: string | null, doc?: any) => {
+    if (doc?.client_name) return doc.client_name;
+    if (doc?.customer_name) return doc.customer_name;
+    if (!customerId) return 'Client';
     const found = customers.find((c) => c.id === customerId);
-    return found ? found.name : 'Devi Times';
+    return found ? found.name : 'Client';
   };
 
   const getCustomerCurrency = (customerId: string | null, docCurrency?: string) => {
@@ -571,7 +583,7 @@ function DashboardContent() {
                             </span>
                           </td>
                           <td className="py-3.5 px-4 sm:px-5 font-bold text-slate-800 whitespace-nowrap">
-                            {getCustomerName(doc.customer_id)}
+                            {doc.client_name || getCustomerName(doc.customer_id)}
                           </td>
                           <td className="py-3.5 px-4 sm:px-5 text-right font-extrabold text-[#0B2A5B] font-mono whitespace-nowrap">
                             {formatCurrency(doc.amount || 0, clientCurrency)}
@@ -647,10 +659,10 @@ function DashboardContent() {
         {/* Quick View Document Modal */}
         {selectedDoc && (() => {
           const client = getCustomerObj(selectedDoc.customer_id);
-          const clientName = client?.name || 'Devi Times';
-          const clientAddress = client?.address || 'Bus stop, kanchipuram 631502';
-          const clientEmail = client?.email || 'dtcrajesh099415@gmail.com';
-          const clientPhone = client?.phone || '+91 7418956115';
+          const clientName = selectedDoc.client_name || client?.name || selectedDoc.customer_name || 'Client';
+          const clientAddress = selectedDoc.client_address || client?.address || 'Client Address';
+          const clientEmail = selectedDoc.client_email || client?.email || '';
+          const clientPhone = selectedDoc.client_phone || client?.phone || '';
           const docCurrency = getCustomerCurrency(selectedDoc.customer_id, selectedDoc.currency);
           const isInvoice = selectedDoc.doc_type === 'INVOICE' || selectedDoc.invoice_number?.startsWith('INV');
           const amount = Number(selectedDoc.amount || 0);

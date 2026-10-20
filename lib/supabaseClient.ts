@@ -1,8 +1,8 @@
 import { createClient, User, Session } from '@supabase/supabase-js';
 import { Database } from '@/types/database.types';
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://xdpgbbcnfuytyiwtekpi.supabase.co';
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'sb_publishable_3Ch78epRp3bddJ6V7259Dg_ASMA9PCq';
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://uvyqnxmznsepnxhmogqx.supabase.co';
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InV2eXFueG16bnNlcG54aG1vZ3F4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTIzODcyODMsImV4cCI6MjEwNzk2MzI4M30.NiVjG8z-fn1w2_Zxfpb9eyaSF7fuXYjE97Fdf5VglZ8';
 
 // Real Supabase Client
 const realClient = createClient<Database>(supabaseUrl, supabaseAnonKey);
@@ -106,7 +106,16 @@ const DEFAULT_INVOICES = [
 // Persistent localStorage helpers
 const STORAGE_PREFIX = 'denvex_storage_';
 
-function getStoredTable(tableName: string): any[] {
+function withTimeout<T>(promise: PromiseLike<T> | any, ms = 800): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('timeout')), ms);
+    promise
+      .then((val: any) => { clearTimeout(timer); resolve(val); })
+      .catch((err: any) => { clearTimeout(timer); reject(err); });
+  });
+}
+
+export function getStoredTable(tableName: string): any[] {
   if (typeof window === 'undefined') {
     if (tableName === 'customers') return [...DEFAULT_CUSTOMERS];
     if (tableName === 'invoices') return [...DEFAULT_INVOICES];
@@ -121,8 +130,8 @@ function getStoredTable(tableName: string): any[] {
       if (Array.isArray(parsed) && parsed.length > 0) {
         return parsed;
       }
-    }
-  } catch (err) {
+              }
+            } catch (err) {
     console.warn(`Error reading localStorage for ${tableName}:`, err);
   }
 
@@ -183,7 +192,9 @@ export function subscribeToDataChanges(callback: () => void) {
 
   // Gentle 30s background sync
   const intervalId = setInterval(() => {
-    callback();
+    if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+      callback();
+    }
   }, 30000);
 
   return () => {
@@ -205,7 +216,15 @@ function setStoredTable(tableName: string, data: any[]) {
   }
 }
 
-let currentMockSession: Session | null = MOCK_SESSION;
+let currentMockSession: Session | null = (() => {
+  if (typeof window !== 'undefined') {
+    try {
+      const saved = window.localStorage.getItem('denvex_auth_session');
+      if (saved) return JSON.parse(saved);
+    } catch {}
+  }
+  return MOCK_SESSION;
+})();
 const authListeners: Set<(event: string, session: Session | null) => void> = new Set();
 
 function notifyListeners(event: string, session: Session | null) {
@@ -238,6 +257,20 @@ export const supabase = {
         const res = await realClient.auth.getSession();
         if (res.data && res.data.session) return res;
       } catch {}
+
+      if (typeof window !== 'undefined') {
+        try {
+          const saved = window.localStorage.getItem('denvex_auth_session');
+          if (saved) {
+            const parsed = JSON.parse(saved);
+            if (parsed && parsed.user) {
+              currentMockSession = parsed;
+              return { data: { session: currentMockSession }, error: null };
+            }
+              }
+            } catch {}
+      }
+
       return {
         data: { session: currentMockSession || MOCK_SESSION },
         error: null,
@@ -278,24 +311,39 @@ export const supabase = {
 
         if (realRes.data?.session) {
           currentMockSession = realRes.data.session;
+          if (typeof window !== 'undefined') {
+            try {
+              window.localStorage.setItem('denvex_auth_session', JSON.stringify(currentMockSession));
+            } catch {}
+          }
           notifyListeners('SIGNED_IN', currentMockSession);
           return realRes;
         }
 
-        if (realRes.error) {
+        const errMsg = realRes.error?.message?.toLowerCase() || '';
+        const isNetworkOrFetchError = errMsg.includes('fetch') || errMsg.includes('network') || errMsg.includes('failed') || errMsg.includes('connection');
+
+        // Only return realRes if it's an explicit auth refusal (e.g. invalid password on live cloud)
+        // If it's a network error or unreachable host, allow falling back to demo credentials
+        if (realRes.error && !isNetworkOrFetchError) {
           return realRes;
         }
       } catch (err: any) {
         console.warn('Real client authentication error:', err);
       }
 
-      // Fallback only if offline and using demo credentials
+      // Fallback if offline or host unreachable using demo credentials
       if (targetEmail === 'teamdenvex@gmail.com' && targetPassword === 'password123') {
         const userSession: Session = {
           ...MOCK_SESSION,
           user: { ...MOCK_USER, email: targetEmail },
         };
         currentMockSession = userSession;
+        if (typeof window !== 'undefined') {
+          try {
+            window.localStorage.setItem('denvex_auth_session', JSON.stringify(userSession));
+          } catch {}
+        }
         notifyListeners('SIGNED_IN', currentMockSession);
         return {
           data: { user: userSession.user, session: userSession },
@@ -313,6 +361,11 @@ export const supabase = {
         await realClient.auth.signOut();
       } catch {}
       currentMockSession = null;
+      if (typeof window !== 'undefined') {
+        try {
+          window.localStorage.removeItem('denvex_auth_session');
+        } catch {}
+      }
       notifyListeners('SIGNED_OUT', null);
       return { error: null };
     },
@@ -321,7 +374,10 @@ export const supabase = {
       try {
         const realRes = await realClient.auth.resetPasswordForEmail(targetEmail, options);
         if (realRes.data && !realRes.error) return realRes;
-        if (realRes.error) return realRes;
+        const errMsg = realRes.error?.message?.toLowerCase() || '';
+        if (realRes.error && !errMsg.includes('fetch') && !errMsg.includes('network') && !errMsg.includes('failed')) {
+          return realRes;
+        }
       } catch (err: any) {
         console.warn('Real client resetPasswordForEmail error, using fallback:', err);
       }
@@ -384,25 +440,49 @@ export const supabase = {
       });
     };
 
+    // Normalize rows from real Supabase DB to match the field names the frontend expects.
+    // Real DB invoices: invoice_date -> issue_date, total_amount -> amount
+    // Real DB customers: billing_address -> address
+    const normalizeDbRows = (rows: any[]): any[] => {
+      return rows.map((row) => {
+        if (tableName === 'invoices') {
+          return {
+            ...row,
+            // Map DB field names to frontend field names
+            issue_date: row.issue_date || row.invoice_date || null,
+            amount: (row.amount !== undefined && row.amount !== null && row.amount !== 0)
+              ? row.amount
+              : (row.total_amount ?? 0),
+          };
+        }
+        if (tableName === 'customers') {
+          return {
+            ...row,
+            address: row.address || row.billing_address || null,
+          };
+        }
+        return row;
+      });
+    };
+
     return {
       select(_columns?: string) {
         const fetchAll = async () => {
           let realData: any[] = [];
           try {
-            const realRes = await realClient.from(tableName as any).select(_columns || '*');
-            if (realRes.data && Array.isArray(realRes.data) && realRes.data.length > 0) {
-              realData = realRes.data;
+            const realRes: any = await withTimeout(realClient.from(tableName as any).select(_columns || '*'), 800);
+            if (realRes && realRes.data && Array.isArray(realRes.data) && realRes.data.length > 0) {
+              realData = normalizeDbRows(realRes.data);
             }
           } catch {}
 
           const storedData = getStoredTable(tableName);
-          const combined = [...realData];
-          storedData.forEach((m: any) => {
-            if (!combined.some((c: any) => c.id === m.id || (c.invoice_number && c.invoice_number === m.invoice_number))) {
-              combined.unshift(m);
-            }
-          });
-          return { data: combined, error: null };
+          // When real DB returns data, use it as sole source of truth.
+          if (realData.length > 0) {
+            return { data: realData, error: null };
+          }
+          // Fall back to localStorage only when real DB is unavailable.
+          return { data: storedData, error: null };
         };
 
         return {
@@ -412,16 +492,28 @@ export const supabase = {
           async eq(_columnName: string, _value: any) {
             let realData: any[] = [];
             try {
-              let query = realClient.from(tableName as any).select('*');
-              // Omit user_id filter if table doesn't have user_id column
-              if (_columnName && !((tableName === 'invoices' || tableName === 'customers') && _columnName === 'user_id')) {
-                query = query.eq(_columnName, _value);
-              }
-              const realRes = await query;
-              if (realRes.data && Array.isArray(realRes.data) && realRes.data.length > 0) {
-                realData = realRes.data;
+              // The real DB invoices & customers tables have no 'user_id' column.
+              // Ownership is enforced by RLS policies via business_id.
+              // When the frontend queries .eq('user_id', ...), we fetch all rows
+              // because RLS already scopes results to the authenticated user's businesses.
+              if ((tableName === 'invoices' || tableName === 'customers') && _columnName === 'user_id') {
+                const realRes: any = await withTimeout(realClient.from(tableName as any).select('*'), 800);
+                if (realRes && realRes.data && Array.isArray(realRes.data) && realRes.data.length > 0) {
+                  realData = normalizeDbRows(realRes.data);
+                }
+              } else {
+                const realRes: any = await withTimeout(realClient.from(tableName as any).select('*').eq(_columnName, _value), 800);
+                if (realRes && realRes.data && Array.isArray(realRes.data) && realRes.data.length > 0) {
+                  realData = normalizeDbRows(realRes.data);
+                }
               }
             } catch {}
+
+            // When real DB returns data, use it as sole source of truth.
+            // Only fall back to localStorage when real DB is unavailable (offline/error).
+            if (realData.length > 0) {
+              return { data: realData, error: null };
+            }
 
             const storedData = getStoredTable(tableName);
             const filteredStored = storedData.filter((item: any) => {
@@ -429,14 +521,7 @@ export const supabase = {
               return item[_columnName] === _value;
             });
 
-            const combined = [...realData];
-            filteredStored.forEach((m: any) => {
-              if (!combined.some((c: any) => c.id === m.id || (c.invoice_number && c.invoice_number === m.invoice_number))) {
-                combined.unshift(m);
-              }
-            });
-
-            return { data: combined, error: null };
+            return { data: filteredStored, error: null };
           },
         };
       },
@@ -526,4 +611,3 @@ export const supabase = {
     };
   },
 } as any;
-

@@ -371,10 +371,56 @@ export function CreateDocumentContent() {
       const { data: userRes } = await supabase.auth.getSession();
       const userId = userRes.session?.user?.id || 'usr_denvex_admin_001';
 
+      // Ensure customer exists or create/update customer with the exact entered details
+      const trimmedName = clientName.trim() || 'Client';
+      let targetCustomerId = selectedCustomerId;
+      const existingCust = customers.find(
+        (c) => c.name?.toLowerCase().trim() === trimmedName.toLowerCase()
+      );
+
+      const isUuid = (val: any) => typeof val === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val);
+      const generateUuid = () => typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : 'c' + Math.random().toString(16).substring(2, 10) + '-0000-0000-0000-' + Math.random().toString(16).substring(2, 14);
+
+      if (existingCust) {
+        targetCustomerId = existingCust.id;
+      } else {
+        const newCustId = generateUuid();
+        const newCust = {
+          id: newCustId,
+          business_id: 'b1111111-1111-1111-1111-111111111111',
+          user_id: userId,
+          name: trimmedName,
+          company: trimmedName,
+          email: clientEmail.trim(),
+          phone: clientPhone.trim(),
+          address: clientAddress.trim(),
+          status: 'Active',
+          preferred_currency: activeCurrency,
+          created_at: new Date().toISOString(),
+        };
+        await supabase.from('customers').insert([newCust]);
+        targetCustomerId = newCustId;
+        triggerGlobalSync('customers');
+      }
+
+      if (!isUuid(targetCustomerId)) {
+        const matched = customers.find(c => isUuid(c.id) && c.name?.toLowerCase().trim() === trimmedName.toLowerCase());
+        if (matched) {
+          targetCustomerId = matched.id;
+        } else {
+          targetCustomerId = generateUuid();
+        }
+      }
+
       // Store in Supabase / Mock database
       const payload = calculateDatabaseTotals({
         user_id: userId,
-        customer_id: selectedCustomerId,
+        customer_id: targetCustomerId,
+        client_name: trimmedName,
+        client_company: trimmedName,
+        client_email: clientEmail.trim(),
+        client_address: clientAddress.trim(),
+        client_phone: clientPhone.trim(),
         doc_type: typeChoice,
         invoice_number: activeDocNumber,
         subtotal,
@@ -599,22 +645,6 @@ export function CreateDocumentContent() {
                 </div>
 
                 <div className="space-y-3">
-                  <div>
-                    <label className="block text-[11px] font-semibold text-slate-600 mb-1">Quick Select Saved Client</label>
-                    <select
-                      value={selectedCustomerId}
-                      onChange={(e) => handleClientSelect(e.target.value)}
-                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-800 font-medium focus:outline-none focus:border-[#0B2A5B]"
-                    >
-                      <option value="">-- Choose from Directory --</option>
-                      {customers.map((cust) => (
-                        <option key={cust.id} value={cust.id}>
-                          {cust.name} {cust.company ? `(${cust.company})` : ''} - {cust.preferred_currency || 'INR'}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div>
                       <label className="block text-[11px] font-semibold text-slate-600 mb-1">Client / Business Name *</label>
