@@ -24,8 +24,8 @@ function DashboardContent() {
   const [downloadingPdf, setDownloadingPdf] = useState(false);
   const modalPdfRef = useRef<HTMLDivElement>(null);
 
-  const fetchDashboardData = async () => {
-    setLoading(true);
+  const fetchDashboardData = async (isInitial = false) => {
+    if (isInitial) setLoading(true);
     try {
       const { data: userRes } = await supabase.auth.getSession();
       const userId = userRes.session?.user?.id || 'usr_denvex_admin_001';
@@ -40,13 +40,13 @@ function DashboardContent() {
     } catch (err) {
       console.error('Error loading dashboard data:', err);
     } finally {
-      setLoading(false);
+      if (isInitial) setLoading(false);
     }
   };
 
   useEffect(() => {
-    fetchDashboardData();
-    return subscribeToDataChanges(fetchDashboardData);
+    fetchDashboardData(true);
+    return subscribeToDataChanges(() => fetchDashboardData(false));
   }, []);
 
   // Direct Interactive Status Toggle (UNPAID <-> PAID <-> PARTIALLY PAID)

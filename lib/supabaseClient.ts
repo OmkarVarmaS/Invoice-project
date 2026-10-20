@@ -163,9 +163,11 @@ export function subscribeToDataChanges(callback: () => void) {
       callback();
     }
   };
+  const handleFocus = () => callback();
 
   window.addEventListener('denvex_storage_changed', handleCustom);
   window.addEventListener('storage', handleStorage);
+  window.addEventListener('focus', handleFocus);
 
   let bc: BroadcastChannel | null = null;
   if ('BroadcastChannel' in window) {
@@ -179,14 +181,15 @@ export function subscribeToDataChanges(callback: () => void) {
     } catch {}
   }
 
-  // Periodic 2.5s polling loop to pick up cloud DB & multi-browser updates automatically
+  // Gentle 30s background sync
   const intervalId = setInterval(() => {
     callback();
-  }, 2500);
+  }, 30000);
 
   return () => {
     window.removeEventListener('denvex_storage_changed', handleCustom);
     window.removeEventListener('storage', handleStorage);
+    window.removeEventListener('focus', handleFocus);
     if (bc) bc.close();
     clearInterval(intervalId);
   };
@@ -409,7 +412,12 @@ export const supabase = {
           async eq(_columnName: string, _value: any) {
             let realData: any[] = [];
             try {
-              const realRes = await realClient.from(tableName as any).select('*').eq(_columnName, _value);
+              let query = realClient.from(tableName as any).select('*');
+              // Omit user_id filter if table doesn't have user_id column
+              if (_columnName && !((tableName === 'invoices' || tableName === 'customers') && _columnName === 'user_id')) {
+                query = query.eq(_columnName, _value);
+              }
+              const realRes = await query;
               if (realRes.data && Array.isArray(realRes.data) && realRes.data.length > 0) {
                 realData = realRes.data;
               }
