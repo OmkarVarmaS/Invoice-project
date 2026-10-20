@@ -1,6 +1,7 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, Suspense } from 'react';
+import { useSearchParams } from 'next/navigation';
 import Sidebar from '@/components/Sidebar';
 import Header from '@/components/Header';
 import { supabase, subscribeToDataChanges, triggerGlobalSync, getStoredTable } from '@/lib/supabaseClient';
@@ -11,10 +12,30 @@ import { DENVEX_LOGO_DATA_URI } from '@/lib/logoData';
 import AuthGuard from '@/components/AuthGuard';
 
 function InvoicesContent() {
+  const searchParams = useSearchParams();
+  const urlStatus = searchParams.get('status') || searchParams.get('filter');
+  const initialFilter = urlStatus && (urlStatus.toUpperCase() === 'PENDING' || urlStatus.toUpperCase() === 'UNPAID')
+    ? 'UNPAID'
+    : (urlStatus ? urlStatus.toUpperCase() : 'ALL');
+
   const [invoices, setInvoices] = useState<any[]>([]);
   const [customers, setCustomers] = useState<any[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
-  const [statusFilter, setStatusFilter] = useState('ALL');
+  const [statusFilter, setStatusFilter] = useState<string>(
+    ['ALL', 'UNPAID', 'PAID', 'PARTIALLY PAID'].includes(initialFilter) ? initialFilter : 'ALL'
+  );
+
+  useEffect(() => {
+    const raw = searchParams.get('status') || searchParams.get('filter');
+    if (raw) {
+      const normalized = (raw.toUpperCase() === 'PENDING' || raw.toUpperCase() === 'UNPAID')
+        ? 'UNPAID'
+        : raw.toUpperCase();
+      if (['ALL', 'UNPAID', 'PAID', 'PARTIALLY PAID'].includes(normalized)) {
+        setStatusFilter(normalized);
+      }
+    }
+  }, [searchParams]);
   const [loading, setLoading] = useState(true);
   const [selectedInvoice, setSelectedInvoice] = useState<any | null>(null);
   const [downloadingPdf, setDownloadingPdf] = useState(false);
@@ -61,26 +82,40 @@ function InvoicesContent() {
 
   // Direct Interactive Status Toggle
   const handleToggleStatus = async (docId: string, newStatus: string) => {
+    const prev = [...invoices];
     try {
-      setInvoices((prev) =>
-        prev.map((inv) => (inv.id === docId ? { ...inv, status: newStatus } : inv))
+      setInvoices((current) =>
+        current.map((inv) => (inv.id === docId ? { ...inv, status: newStatus } : inv))
       );
 
-      await supabase.from('invoices').update({ status: newStatus }).eq('id', docId);
+      const { error } = await supabase.from('invoices').update({ status: newStatus }).eq('id', docId);
+      if (error) {
+        console.error('Error updating status in Supabase:', error);
+        setInvoices(prev);
+        return;
+      }
       triggerGlobalSync('invoices');
     } catch (err) {
       console.error('Error updating status:', err);
+      setInvoices(prev);
     }
   };
 
   const handleDeleteInvoice = async (docId: string) => {
     if (!confirm('Are you sure you want to delete this invoice?')) return;
+    const prev = [...invoices];
     try {
-      setInvoices((prev) => prev.filter((inv) => inv.id !== docId));
-      await supabase.from('invoices').delete().eq('id', docId);
+      setInvoices((current) => current.filter((inv) => inv.id !== docId));
+      const { error } = await supabase.from('invoices').delete().eq('id', docId);
+      if (error) {
+        console.error('Error deleting invoice from Supabase:', error);
+        setInvoices(prev);
+        return;
+      }
       triggerGlobalSync('invoices');
     } catch (err) {
       console.error('Error deleting invoice:', err);
+      setInvoices(prev);
     }
   };
 
@@ -130,16 +165,25 @@ function InvoicesContent() {
   };
 
   const filteredInvoices = invoices.filter((inv) => {
+    const isInvoiceDoc = (inv.doc_type === 'INVOICE' || !inv.doc_type) && !inv.invoice_number?.startsWith('EST');
+    if (!isInvoiceDoc) return false;
+
     const cust = getCustomerForInvoice(inv.customer_id);
     const clientDisplayName = inv.client_name || cust?.name || inv.customer_name || '';
     const matchesQuery =
+      !searchQuery ||
       inv.invoice_number?.toLowerCase().includes(searchQuery.toLowerCase()) ||
       inv.issue_date?.includes(searchQuery) ||
       inv.notes?.toLowerCase().includes(searchQuery.toLowerCase()) ||
       clientDisplayName.toLowerCase().includes(searchQuery.toLowerCase()) ||
       (cust && cust.name?.toLowerCase().includes(searchQuery.toLowerCase()));
 
-    const matchesStatus = statusFilter === 'ALL' || inv.status?.toUpperCase() === statusFilter;
+    const invStatus = (inv.status || 'UNPAID').toUpperCase();
+    const isPendingOrUnpaid = invStatus === 'UNPAID' || invStatus === 'PENDING';
+    const matchesStatus =
+      statusFilter === 'ALL' ||
+      (statusFilter === 'UNPAID' ? isPendingOrUnpaid : invStatus === statusFilter);
+
     return matchesQuery && matchesStatus;
   });
 
@@ -683,7 +727,9 @@ function InvoicesContent() {
 export default function InvoicesPage() {
   return (
     <AuthGuard>
-      <InvoicesContent />
+      <Suspense fallback={<div className="min-h-screen bg-[#F0F4F8]" />}>
+        <InvoicesContent />
+      </Suspense>
     </AuthGuard>
   );
 }

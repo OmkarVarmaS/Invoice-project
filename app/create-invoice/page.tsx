@@ -412,8 +412,11 @@ export function CreateDocumentContent() {
         }
       }
 
-      // Store in Supabase / Mock database
+      // Store in Supabase
+      const newInvId = generateUuid();
       const payload = calculateDatabaseTotals({
+        id: newInvId,
+        business_id: 'b1111111-1111-1111-1111-111111111111',
         user_id: userId,
         customer_id: targetCustomerId,
         client_name: trimmedName,
@@ -435,7 +438,10 @@ export function CreateDocumentContent() {
         notes: customerNotes,
       });
 
-      await supabase.from('invoices').insert([payload]);
+      const { data: insertedData, error: invErr } = await supabase.from('invoices').insert([payload]);
+      if (invErr) {
+        throw new Error(invErr.message || 'Failed to persist document to Supabase database');
+      }
       triggerGlobalSync('invoices');
 
       // PDF Download using isolated export container

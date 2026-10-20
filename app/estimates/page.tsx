@@ -31,7 +31,7 @@ function EstimatesContent() {
         ]);
 
         if (estRes.data) {
-          setEstimates(estRes.data.filter((item: any) => item.doc_type === 'ESTIMATE'));
+          setEstimates(estRes.data.filter((item: any) => item.doc_type === 'ESTIMATE' || item.invoice_number?.startsWith('EST')));
         }
         if (custRes.data) {
           setCustomers(custRes.data);
@@ -49,12 +49,19 @@ function EstimatesContent() {
 
   const handleDeleteEstimate = async (docId: string) => {
     if (!confirm('Are you sure you want to delete this estimate?')) return;
+    const prev = [...estimates];
     try {
-      setEstimates((prev) => prev.filter((est) => est.id !== docId));
-      await supabase.from('invoices').delete().eq('id', docId);
+      setEstimates((current) => current.filter((est) => est.id !== docId));
+      const { error } = await supabase.from('invoices').delete().eq('id', docId);
+      if (error) {
+        console.error('Error deleting estimate from Supabase:', error);
+        setEstimates(prev);
+        return;
+      }
       triggerGlobalSync('invoices');
     } catch (err) {
       console.error('Error deleting estimate:', err);
+      setEstimates(prev);
     }
   };
 

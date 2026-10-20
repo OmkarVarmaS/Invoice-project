@@ -55,58 +55,13 @@ const DEFAULT_BUSINESS_PROFILES = [
   },
 ];
 
-const DEFAULT_CUSTOMERS = [
-  {
-    id: 'cust_royaltravels',
-    user_id: 'usr_denvex_admin_001',
-    name: 'Royaltravels',
-    email: 'royaltravelskpm@gmail.com',
-    company: 'Royaltravels',
-    phone: '+91 9080335337',
-    address: 'Kanchipuram - 631502',
-    status: 'Active',
-    preferred_currency: 'INR',
-    created_at: '2026-07-20T10:30:00.000Z',
-  },
-  {
-    id: 'cust_002',
-    user_id: 'usr_denvex_admin_001',
-    name: 'Marcus Vance',
-    email: 'marcus@starlight.io',
-    company: 'Starlight Ventures',
-    phone: '+1 (555) 432-9876',
-    address: 'Suite 400, Innovation Tower, SF, CA',
-    status: 'Active',
-    preferred_currency: 'USD',
-    created_at: '2026-03-22T14:15:00.000Z',
-  },
-];
-
-const DEFAULT_INVOICES = [
-  {
-    id: 'inv_2026_0002',
-    user_id: 'usr_denvex_admin_001',
-    customer_id: 'cust_royaltravels',
-    doc_type: 'INVOICE',
-    invoice_number: 'INV-2026-0002',
-    subtotal: 4700.00,
-    discount_amount: 0.00,
-    tax_rate: 0,
-    tax_amount: 0.00,
-    amount: 4700.00,
-    currency: 'INR',
-    status: 'PAID',
-    issue_date: '2026-07-21',
-    due_date: '2026-08-05',
-    notes: 'Thank you for your business. For questions, contact teamdenvex@gmail.com.',
-    created_at: '2026-07-21T11:00:00.000Z',
-  },
-];
+const DEFAULT_CUSTOMERS: any[] = [];
+const DEFAULT_INVOICES: any[] = [];
 
 // Persistent localStorage helpers
 const STORAGE_PREFIX = 'denvex_storage_';
 
-function withTimeout<T>(promise: PromiseLike<T> | any, ms = 800): Promise<T> {
+function withTimeout<T>(promise: PromiseLike<T> | any, ms = 4000): Promise<T> {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error('timeout')), ms);
     promise
@@ -117,8 +72,6 @@ function withTimeout<T>(promise: PromiseLike<T> | any, ms = 800): Promise<T> {
 
 export function getStoredTable(tableName: string): any[] {
   if (typeof window === 'undefined') {
-    if (tableName === 'customers') return [...DEFAULT_CUSTOMERS];
-    if (tableName === 'invoices') return [...DEFAULT_INVOICES];
     if (tableName === 'business_profiles') return [...DEFAULT_BUSINESS_PROFILES];
     return [];
   }
@@ -127,25 +80,16 @@ export function getStoredTable(tableName: string): any[] {
     const raw = window.localStorage.getItem(STORAGE_PREFIX + tableName);
     if (raw) {
       const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed) && parsed.length > 0) {
+      if (Array.isArray(parsed)) {
         return parsed;
       }
-              }
-            } catch (err) {
+    }
+  } catch (err) {
     console.warn(`Error reading localStorage for ${tableName}:`, err);
   }
 
-  // Fallback to seed defaults and save to localStorage
-  let initialData: any[] = [];
-  if (tableName === 'customers') initialData = [...DEFAULT_CUSTOMERS];
-  else if (tableName === 'invoices') initialData = [...DEFAULT_INVOICES];
-  else if (tableName === 'business_profiles') initialData = [...DEFAULT_BUSINESS_PROFILES];
-
-  try {
-    window.localStorage.setItem(STORAGE_PREFIX + tableName, JSON.stringify(initialData));
-  } catch {}
-
-  return initialData;
+  if (tableName === 'business_profiles') return [...DEFAULT_BUSINESS_PROFILES];
+  return [];
 }
 
 // Multi-browser & Cross-tab sync channel
@@ -410,6 +354,7 @@ export const supabase = {
           clean.customer_id = (row.customer_id && isUuid(row.customer_id)) ? row.customer_id : DEFAULT_CUST_UUID;
           
           clean.invoice_number = row.invoice_number || `INV-2026-${Math.floor(1000 + Math.random() * 9000)}`;
+          clean.status = (row.status || 'UNPAID').toUpperCase();
           const invDateStr = row.invoice_date || row.issue_date || new Date().toISOString().split('T')[0];
           clean.invoice_date = invDateStr;
           
@@ -441,24 +386,28 @@ export const supabase = {
     };
 
     // Normalize rows from real Supabase DB to match the field names the frontend expects.
-    // Real DB invoices: invoice_date -> issue_date, total_amount -> amount
-    // Real DB customers: billing_address -> address
     const normalizeDbRows = (rows: any[]): any[] => {
       return rows.map((row) => {
         if (tableName === 'invoices') {
+          const isEstimate = row.doc_type === 'ESTIMATE' || (typeof row.invoice_number === 'string' && row.invoice_number.startsWith('EST'));
           return {
             ...row,
-            // Map DB field names to frontend field names
+            doc_type: isEstimate ? 'ESTIMATE' : (row.doc_type || 'INVOICE'),
             issue_date: row.issue_date || row.invoice_date || null,
             amount: (row.amount !== undefined && row.amount !== null && row.amount !== 0)
-              ? row.amount
-              : (row.total_amount ?? 0),
+              ? Number(row.amount)
+              : Number(row.total_amount ?? 0),
+            subtotal: Number(row.subtotal ?? row.total_amount ?? row.amount ?? 0),
+            tax_amount: Number(row.tax_amount ?? 0),
+            discount_amount: Number(row.discount_amount ?? 0),
+            status: (row.status || 'UNPAID').toUpperCase(),
           };
         }
         if (tableName === 'customers') {
           return {
             ...row,
             address: row.address || row.billing_address || null,
+            company: row.company || row.name || '',
           };
         }
         return row;
@@ -468,20 +417,23 @@ export const supabase = {
     return {
       select(_columns?: string) {
         const fetchAll = async () => {
-          let realData: any[] = [];
           try {
-            const realRes: any = await withTimeout(realClient.from(tableName as any).select(_columns || '*'), 800);
-            if (realRes && realRes.data && Array.isArray(realRes.data) && realRes.data.length > 0) {
-              realData = normalizeDbRows(realRes.data);
+            const realRes: any = await withTimeout(realClient.from(tableName as any).select(_columns || '*'), 4000);
+            if (realRes && !realRes.error && Array.isArray(realRes.data)) {
+              const normalized = normalizeDbRows(realRes.data);
+              setStoredTable(tableName, normalized);
+              return { data: normalized, error: null };
             }
-          } catch {}
+            if (realRes && realRes.error) {
+              console.warn(`[Supabase DB Select Error on ${String(tableName)}]:`, realRes.error);
+              const cached = getStoredTable(tableName);
+              return { data: cached, error: realRes.error };
+            }
+          } catch (err: any) {
+            console.warn(`[Supabase DB Select Exception on ${String(tableName)}]:`, err?.message || err);
+          }
 
           const storedData = getStoredTable(tableName);
-          // When real DB returns data, use it as sole source of truth.
-          if (realData.length > 0) {
-            return { data: realData, error: null };
-          }
-          // Fall back to localStorage only when real DB is unavailable.
           return { data: storedData, error: null };
         };
 
@@ -490,34 +442,38 @@ export const supabase = {
             return fetchAll().then(onfulfilled, onrejected);
           },
           async eq(_columnName: string, _value: any) {
-            let realData: any[] = [];
             try {
-              // The real DB invoices & customers tables have no 'user_id' column.
-              // Ownership is enforced by RLS policies via business_id.
-              // When the frontend queries .eq('user_id', ...), we fetch all rows
-              // because RLS already scopes results to the authenticated user's businesses.
+              let query;
               if ((tableName === 'invoices' || tableName === 'customers') && _columnName === 'user_id') {
-                const realRes: any = await withTimeout(realClient.from(tableName as any).select('*'), 800);
-                if (realRes && realRes.data && Array.isArray(realRes.data) && realRes.data.length > 0) {
-                  realData = normalizeDbRows(realRes.data);
-                }
+                query = realClient.from(tableName as any).select(_columns || '*');
               } else {
-                const realRes: any = await withTimeout(realClient.from(tableName as any).select('*').eq(_columnName, _value), 800);
-                if (realRes && realRes.data && Array.isArray(realRes.data) && realRes.data.length > 0) {
-                  realData = normalizeDbRows(realRes.data);
-                }
+                query = realClient.from(tableName as any).select(_columns || '*').eq(_columnName, _value);
               }
-            } catch {}
 
-            // When real DB returns data, use it as sole source of truth.
-            // Only fall back to localStorage when real DB is unavailable (offline/error).
-            if (realData.length > 0) {
-              return { data: realData, error: null };
+              const realRes: any = await withTimeout(query, 4000);
+              if (realRes && !realRes.error && Array.isArray(realRes.data)) {
+                const normalized = normalizeDbRows(realRes.data);
+                if (_columnName === 'user_id') {
+                  setStoredTable(tableName, normalized);
+                }
+                return { data: normalized, error: null };
+              }
+              if (realRes && realRes.error) {
+                console.warn(`[Supabase DB Query Error on ${String(tableName)}]:`, realRes.error);
+                const storedData = getStoredTable(tableName);
+                const filteredStored = storedData.filter((item: any) => {
+                  if (!_columnName || _columnName === 'user_id') return true;
+                  return item[_columnName] === _value;
+                });
+                return { data: filteredStored, error: realRes.error };
+              }
+            } catch (err: any) {
+              console.warn(`[Supabase DB Query Exception on ${String(tableName)}]:`, err?.message || err);
             }
 
             const storedData = getStoredTable(tableName);
             const filteredStored = storedData.filter((item: any) => {
-              if (!_columnName) return true;
+              if (!_columnName || _columnName === 'user_id') return true;
               return item[_columnName] === _value;
             });
 
@@ -526,53 +482,47 @@ export const supabase = {
         };
       },
       async insert(rows: any[]) {
-        let dbError = null;
+        let insertedCloudRows: any[] = [];
         try {
           const cleanedRows = formatRowsForSupabase(rows);
-          const res = await realClient.from(tableName as any).insert(cleanedRows);
+          const res = await realClient.from(tableName as any).insert(cleanedRows).select();
           if (res.error) {
-            dbError = res.error;
-            console.warn(`[Supabase DB Insert Notice on ${String(tableName)}]:`, res.error.message || res.error);
+            console.error(`[Supabase DB Insert Error on ${String(tableName)}]:`, res.error.message || res.error);
+            return { data: null, error: res.error };
           } else {
             console.log(`[Supabase DB Insert Success on ${String(tableName)}] Saved to Cloud DB:`, res.data);
+            insertedCloudRows = res.data && Array.isArray(res.data) ? normalizeDbRows(res.data) : [];
           }
         } catch (err: any) {
-          console.warn(`[Supabase DB Insert Exception on ${String(tableName)}]:`, err?.message || err);
+          console.error(`[Supabase DB Insert Exception on ${String(tableName)}]:`, err?.message || err);
+          return { data: null, error: err };
         }
 
         const currentData = getStoredTable(tableName);
-        let calculatedRows = rows;
+        const newRecords = insertedCloudRows.length > 0 ? insertedCloudRows : rows.map(r => ({
+          ...r,
+          id: r.id || (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : 'id_' + Date.now()),
+          created_at: r.created_at || new Date().toISOString(),
+        }));
 
-        if (tableName === 'invoices') {
-          calculatedRows = rows.map((row) => ({
-            id: row.id || `inv_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
-            created_at: row.created_at || new Date().toISOString(),
-            ...calculateDatabaseTotals(row),
-          }));
-        } else if (tableName === 'customers') {
-          calculatedRows = rows.map((row) => ({
-            id: row.id || `cust_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
-            created_at: row.created_at || new Date().toISOString(),
-            ...row,
-          }));
-        }
-
-        const updatedData = [...calculatedRows, ...currentData];
+        const updatedData = [...newRecords, ...currentData.filter((item: any) => !newRecords.some(n => n.id === item.id))];
         setStoredTable(tableName, updatedData);
-        return { data: calculatedRows, error: null };
+        triggerGlobalSync(tableName);
+
+        return { data: newRecords, error: null };
       },
       update(fields: any) {
         return {
           async eq(_columnName: string, _value: any) {
-            let dbError = null;
             try {
-              const res = await realClient.from(tableName as any).update(fields).eq(_columnName, _value);
+              const res = await realClient.from(tableName as any).update(fields).eq(_columnName, _value).select();
               if (res.error) {
-                dbError = res.error;
-                console.warn(`[Supabase DB Update Notice on ${String(tableName)}]:`, res.error.message || res.error);
+                console.error(`[Supabase DB Update Error on ${String(tableName)}]:`, res.error.message || res.error);
+                return { data: null, error: res.error };
               }
             } catch (err: any) {
-              console.warn(`[Supabase DB Update Exception on ${String(tableName)}]:`, err?.message || err);
+              console.error(`[Supabase DB Update Exception on ${String(tableName)}]:`, err?.message || err);
+              return { data: null, error: err };
             }
 
             const currentData = getStoredTable(tableName);
@@ -583,6 +533,7 @@ export const supabase = {
               return item;
             });
             setStoredTable(tableName, updatedData);
+            triggerGlobalSync(tableName);
             return { data: updatedData, error: null };
           },
         };
@@ -590,20 +541,21 @@ export const supabase = {
       delete() {
         return {
           async eq(_columnName: string, _value: any) {
-            let dbError = null;
             try {
               const res = await realClient.from(tableName as any).delete().eq(_columnName, _value);
               if (res.error) {
-                dbError = res.error;
-                console.warn(`[Supabase DB Delete Notice on ${String(tableName)}]:`, res.error.message || res.error);
+                console.error(`[Supabase DB Delete Error on ${String(tableName)}]:`, res.error.message || res.error);
+                return { data: null, error: res.error };
               }
             } catch (err: any) {
-              console.warn(`[Supabase DB Delete Exception on ${String(tableName)}]:`, err?.message || err);
+              console.error(`[Supabase DB Delete Exception on ${String(tableName)}]:`, err?.message || err);
+              return { data: null, error: err };
             }
 
             const currentData = getStoredTable(tableName);
             const updatedData = currentData.filter((item: any) => item[_columnName] !== _value);
             setStoredTable(tableName, updatedData);
+            triggerGlobalSync(tableName);
             return { data: updatedData, error: null };
           },
         };

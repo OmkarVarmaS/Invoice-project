@@ -172,13 +172,17 @@ function DashboardContent() {
     document.body.removeChild(link);
   };
 
-  // Financial Metrics
-  const totalRevenue = invoices.reduce((acc, curr) => acc + (curr.amount || 0), 0);
-  const paidInvoices = invoices.filter((inv) => inv.status?.toUpperCase() === 'PAID');
-  const unpaidInvoices = invoices.filter((inv) => inv.status?.toUpperCase() === 'UNPAID');
-  const paidAmount = paidInvoices.reduce((acc, curr) => acc + (curr.amount || 0), 0);
-  const unpaidAmount = unpaidInvoices.reduce((acc, curr) => acc + (curr.amount || 0), 0);
-  const estimateCount = invoices.filter((inv) => inv.doc_type === 'ESTIMATE' || inv.status?.toUpperCase() === 'VALID').length;
+  // Financial Metrics - strictly invoices (excluding estimates)
+  const invoiceRecords = invoices.filter((inv) => (inv.doc_type === 'INVOICE' || !inv.doc_type) && !inv.invoice_number?.startsWith('EST'));
+  const totalRevenue = invoiceRecords.reduce((acc, curr) => acc + (Number(curr.amount) || 0), 0);
+  const paidInvoices = invoiceRecords.filter((inv) => inv.status?.toUpperCase() === 'PAID');
+  const unpaidInvoices = invoiceRecords.filter((inv) => {
+    const st = (inv.status || '').toUpperCase();
+    return st === 'UNPAID' || st === 'PENDING';
+  });
+  const paidAmount = paidInvoices.reduce((acc, curr) => acc + (Number(curr.amount) || 0), 0);
+  const unpaidAmount = unpaidInvoices.reduce((acc, curr) => acc + (Number(curr.amount) || 0), 0);
+  const estimateCount = invoices.filter((inv) => inv.doc_type === 'ESTIMATE' || inv.invoice_number?.startsWith('EST')).length;
 
   const paidRatio = totalRevenue > 0 ? Math.round((paidAmount / totalRevenue) * 100) : 0;
   const unpaidRatio = totalRevenue > 0 ? Math.round((unpaidAmount / totalRevenue) * 100) : 0;
@@ -287,13 +291,12 @@ function DashboardContent() {
                   </p>
                 </div>
               </div>
-              <button
-                type="button"
-                onClick={() => setStatusFilter('unpaid')}
-                className="bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold px-3.5 py-1.5 rounded-xl transition cursor-pointer active:scale-95 shrink-0"
+              <Link
+                href="/invoices?status=UNPAID"
+                className="bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold px-3.5 py-1.5 rounded-xl transition cursor-pointer active:scale-95 shrink-0 inline-flex items-center"
               >
                 View Pending Only →
-              </button>
+              </Link>
             </div>
           )}
 
@@ -313,7 +316,7 @@ function DashboardContent() {
                 </div>
               </div>
               <p className="text-xs text-slate-500 mt-2.5 sm:mt-3 font-semibold flex items-center justify-between">
-                <span>{invoices.length} Total Records</span>
+                <span>{invoiceRecords.length} Total Records</span>
                 <span className="text-blue-600 font-bold">100% Vol</span>
               </p>
             </div>

@@ -11,6 +11,7 @@ import AuthGuard from '@/components/AuthGuard';
 
 type CustomerRow = Database['public']['Tables']['customers']['Row'];
 export interface ClientWithCurrency extends CustomerRow {
+  business_id?: string;
   preferred_currency?: CurrencyCode;
 }
 
@@ -69,8 +70,11 @@ function ClientsContent() {
       const { data: userRes } = await supabase.auth.getSession();
       const userId = userRes.session?.user?.id || 'usr_denvex_admin_001';
 
+      const generateUuid = () => typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : 'c' + Math.random().toString(16).substring(2, 10) + '-0000-0000-0000-' + Math.random().toString(16).substring(2, 14);
+      const newCustId = generateUuid();
       const newCustomer: ClientWithCurrency = {
-        id: `cust_${Date.now()}`,
+        id: newCustId,
+        business_id: 'b1111111-1111-1111-1111-111111111111',
         user_id: userId,
         name,
         email,
@@ -82,7 +86,12 @@ function ClientsContent() {
         created_at: new Date().toISOString(),
       };
 
-      await supabase.from('customers').insert([newCustomer]);
+      const { error: insertErr } = await supabase.from('customers').insert([newCustomer]);
+      if (insertErr) {
+        console.error('Error adding client to Supabase:', insertErr);
+        setActionMessage(`Error saving client: ${insertErr.message || 'Database error'}`);
+        return;
+      }
       triggerGlobalSync('customers');
       setCustomers([newCustomer, ...customers]);
       setIsModalOpen(false);
@@ -93,8 +102,9 @@ function ClientsContent() {
       setAddress('');
       setPreferredCurrency('INR');
       setActionMessage(`Client "${newCustomer.name}" added and permanently saved.`);
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error adding client:', err);
+      setActionMessage(`Error saving client: ${err?.message || 'Database error'}`);
     } finally {
       setAdding(false);
     }
@@ -108,15 +118,23 @@ function ClientsContent() {
 
   const handleArchiveClient = async () => {
     if (!clientToDelete) return;
+    const prev = [...customers];
     try {
-      await supabase.from('customers').update({ status: 'Archived' }).eq('id', clientToDelete.id);
+      const { error: updateErr } = await supabase.from('customers').update({ status: 'Archived' }).eq('id', clientToDelete.id);
+      if (updateErr) {
+        console.error('Error archiving client in Supabase:', updateErr);
+        setActionMessage(`Error archiving client: ${updateErr.message || 'Database error'}`);
+        return;
+      }
       const updated = customers.map((c) =>
         c.id === clientToDelete.id ? { ...c, status: 'Archived' } : c
       );
       setCustomers(updated);
+      triggerGlobalSync('customers');
       setActionMessage(`Client "${clientToDelete.name}" was archived to preserve invoice history.`);
     } catch (err) {
       console.error('Error archiving client:', err);
+      setCustomers(prev);
     } finally {
       setClientToDelete(null);
     }
@@ -124,12 +142,20 @@ function ClientsContent() {
 
   const handleHardDeleteClient = async () => {
     if (!clientToDelete) return;
+    const prev = [...customers];
     try {
-      await supabase.from('customers').delete().eq('id', clientToDelete.id);
+      const { error: delErr } = await supabase.from('customers').delete().eq('id', clientToDelete.id);
+      if (delErr) {
+        console.error('Error deleting client from Supabase:', delErr);
+        setActionMessage(`Error deleting client: ${delErr.message || 'Database error'}`);
+        return;
+      }
       setCustomers(customers.filter((c) => c.id !== clientToDelete.id));
+      triggerGlobalSync('customers');
       setActionMessage(`Client "${clientToDelete.name}" permanently deleted.`);
     } catch (err) {
       console.error('Error deleting client:', err);
+      setCustomers(prev);
     } finally {
       setClientToDelete(null);
     }
